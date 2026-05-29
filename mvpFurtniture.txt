@@ -1,0 +1,373 @@
+================================================================================
+SKETCHLIB — FRONTEND MVP WORKING SUMMARY
+================================================================================
+Project folder : sketchup-store-web
+App name       : SketchLib
+Next.js        : 16.x (App Router)
+React          : 19.x
+Backend API    : sketchup-store-api (Laravel 13) @ http://localhost:8000/api
+Last updated   : 2026-05-29
+
+This document replaces the original MVP build spec. It is the handoff summary
+for what was actually built, tested, and what is still pending (mostly polish
+and integrations). Core customer flows are working end-to-end against the API.
+
+
+================================================================================
+1. WHAT THIS FRONTEND IS
+================================================================================
+
+SketchLib web is the customer-facing Next.js storefront for a SketchUp 3D
+furniture model library (.skp files). It connects to the Laravel REST API
+(Sanctum Bearer tokens) and does NOT include an admin UI — day-to-day admin
+work lives in Filament at http://localhost:8000/admin on the backend repo.
+
+Business flows implemented on the web:
+
+  • Register / login / logout
+  • Browse pricing plans (public)
+  • Subscribe via manual payment (BaridiMob / CCP reference — placeholder account)
+  • Buy a single category pack via manual payment
+  • Browse categories in the library (access-gated)
+  • View models in a category + download .skp via presigned R2 URL
+  • Admin approves payments in Filament → user gets access on next page load
+
+What is intentionally OUT of scope for this repo:
+
+  • Next.js /admin pages (Filament handles subscriptions, packs, models, users)
+  • SketchUp plugin (separate project; same API, hardware_id login)
+  • Real BaridiMob / Algerian Post payment API (manual transfer + admin approval for now)
+  • Production deploy (both repos still local-dev oriented)
+
+
+================================================================================
+2. LOCAL URLS & HOW TO RUN
+================================================================================
+
+  Frontend (this repo)     http://localhost:3000
+  Backend API              http://localhost:8000/api
+  Filament admin           http://localhost:8000/admin
+
+Start backend:
+  cd "/home/jack/Documents/furtniure 3d models/sketchup-store-api"
+  php artisan serve
+
+Start frontend:
+  cd "/home/jack/Documents/furtniure 3d models/sketchup-store-web"
+  npm run dev
+
+Env (frontend .env.local):
+  NEXT_PUBLIC_API_URL=http://localhost:8000/api
+  NEXT_PUBLIC_PAYMENT_ACCOUNT=0799999999999   ← placeholder until real BaridiMob #
+
+Copy from env.example if .env.local is missing.
+
+Test accounts (from backend seeders):
+  Client   : test@example.com / password123  (may already have active sub — see §8)
+  Admin    : admin@sketchlib.com / sketchlib-admin  (Filament only, not this app)
+  Beta     : *@beta.sketchlib.com / beta2024!
+
+
+================================================================================
+3. BUILD PHASES — WHAT WE COMPLETED
+================================================================================
+
+PHASE 1 — FOUNDATION
+--------------------
+  lib/types.ts              All TS interfaces (User, Plan, Subscription, Category, etc.)
+  lib/api.ts                Axios client + client-only API helpers (no admin routes)
+  lib/utils.ts              formatDzd, formatFileSize, checkout error helpers
+  context/AuthContext.tsx   Cookie auth, useAuth(), bootstrap via GET /auth/me
+  middleware.ts             Route protection (see §5)
+  app/layout.tsx            Root layout + AuthProvider + SketchLib metadata
+  env.example / .env.local  API URL + payment account placeholder
+  Route group shells        (public), (dashboard) — checkout/auth/pricing folders
+
+PHASE 2 — AUTH
+--------------
+  app/(public)/auth/login/page.tsx       Email/password → token cookie → redirect
+  app/(public)/auth/register/page.tsx    Register + optional is_student checkbox
+  app/(dashboard)/dashboard/page.tsx     Minimal stub first; replaced in Phase 4
+
+  Verified: login, register, logout, middleware redirects, cookie persists 30 days.
+
+PHASE 3 — PUBLIC PAGES
+----------------------
+  components/Navbar.tsx         Auth-aware nav (Pricing, Library, Sign in/out)
+  app/(public)/layout.tsx       Light wrapper; Navbar hidden on /auth/*
+  app/(public)/page.tsx         Landing — hero, feature cards, CTAs
+  app/(public)/pricing/page.tsx GET /plans — Regular + Student plan grids
+
+  Verified: plans load from API, links to checkout work.
+
+PHASE 4 — CLIENT LIBRARY (DASHBOARD)
+------------------------------------
+  app/(dashboard)/layout.tsx              Navbar on all dashboard routes
+  app/(dashboard)/dashboard/page.tsx        Category grid + access gating
+  app/(dashboard)/dashboard/[categorySlug]/page.tsx   Model list + download
+  components/CategoryCard.tsx               Locked/unlocked + pack purchase link
+  components/ModelCard.tsx                  Thumbnail, metadata, Download .skp
+
+  Access logic (matches backend AccessService):
+    • Full access : is_beta OR active_subscription (active/beta status)
+    • Pack only   : packCategoryIds from GET /auth/me
+    • Locked      : overlay + link to /checkout/pack/{categoryId}
+
+  Verified: category browse, model list, presigned download opens R2 URL in new tab.
+
+PHASE 5 — CHECKOUT (MANUAL PAYMENT)
+-----------------------------------
+  components/PaymentInstructions.tsx           Shared BaridiMob/CCP steps
+  app/(public)/checkout/subscription/page.tsx  POST /subscriptions
+  app/(public)/checkout/pack/[categoryId]/page.tsx  POST /packs/{categoryId}
+  middleware.ts                                /checkout/* requires login + ?next= redirect
+
+  Flow: user transfers money offline → enters payer_name + payment_ref → status
+  pending in DB → admin activates in Filament → user gets access.
+
+  Verified: new account checkout → success screen → pending row in Filament (filter:
+  Pending). Approve in Filament → full library access on dashboard.
+
+PHASE 6 — ADMIN (SKIPPED)
+-------------------------
+  Not built in Next.js. Filament at /admin on Laravel repo handles:
+  models, categories, subscription approval, pack approval, users, download log.
+  Landing page links staff to http://localhost:8000/admin.
+
+PHASE 7 — POLISH (CORE UX ONLY)
+-------------------------------
+  app/globals.css                 Force light theme (fixes invisible text in dark OS)
+  components/ui/Button.tsx        Shared button
+  components/ui/Input.tsx         Shared labeled input
+  components/ui/Badge.tsx         Status badges
+  components/ui/FormError.tsx     Form-level error display
+  components/AccountStatusBanner.tsx   Dashboard subscription/beta status
+  lib/utils.ts                    getCheckoutBlockMessage / getPackBlockMessage
+                                  (uses backend existing_status on 422)
+  Checkout pre-checks             Block form if already subscribed / owns pack
+  Login/register ?next=           Return to checkout after auth
+  Hydration fix (AuthContext)     Cookie read only after mount — no SSR mismatch
+  Removed ApiConnectionCheck      Phase 1 dev helper no longer on landing
+
+  NOT done (polish backlog — see §10):
+  full design system, dark mode, mobile polish, cover images on categories,
+  loading skeletons everywhere, toasts, i18n, SEO, error boundaries, etc.
+
+
+================================================================================
+4. FOLDER STRUCTURE (ACTUAL)
+================================================================================
+
+sketchup-store-web/
+├── app/
+│   ├── layout.tsx                          Root + AuthProvider
+│   ├── globals.css
+│   ├── (public)/
+│   │   ├── layout.tsx                      Navbar wrapper (not on /auth)
+│   │   ├── page.tsx                        Landing
+│   │   ├── pricing/page.tsx
+│   │   ├── auth/login/page.tsx
+│   │   ├── auth/register/page.tsx
+│   │   └── checkout/
+│   │       ├── subscription/page.tsx
+│   │       └── pack/[categoryId]/page.tsx
+│   └── (dashboard)/
+│       ├── layout.tsx                      Navbar
+│       └── dashboard/
+│           ├── page.tsx                    Category grid
+│           └── [categorySlug]/page.tsx     Models + download
+├── components/
+│   ├── ui/                                 Button, Input, Badge, FormError
+│   ├── Navbar.tsx
+│   ├── CategoryCard.tsx
+│   ├── ModelCard.tsx
+│   ├── PaymentInstructions.tsx
+│   └── AccountStatusBanner.tsx
+├── context/
+│   └── AuthContext.tsx
+├── lib/
+│   ├── api.ts
+│   ├── types.ts
+│   └── utils.ts
+├── middleware.ts
+├── env.example
+├── backendnvp.txt                          Backend handoff (sibling doc)
+└── mvpFurtniture.txt                       This file
+
+
+================================================================================
+5. ROUTE PROTECTION (middleware.ts)
+================================================================================
+
+  /dashboard/*   Requires auth_token cookie → else redirect /auth/login?next=...
+  /checkout/*    Same as dashboard
+  /auth/*        If already logged in → redirect /dashboard (or ?next= target)
+
+  NOT protected: /, /pricing (public)
+
+  NOT in this app: /admin/* (Filament on Laravel)
+
+
+================================================================================
+6. AUTH FLOW
+================================================================================
+
+  Token storage : js-cookie key auth_token, 30-day expiry
+  API auth      : Authorization: Bearer {token} on every axios request
+  Bootstrap     : On mount, if cookie exists → GET /auth/me → user + packCategoryIds
+  401 handling  : Clear cookie, redirect to /auth/login
+  Hydration     : isLoading=true until client mount completes (server/client HTML match)
+
+  AuthContext exposes:
+    user, token, packCategoryIds, isLoading, login(), logout(), refresh()
+
+
+================================================================================
+7. API ENDPOINTS USED (CLIENT ONLY)
+================================================================================
+
+Base: NEXT_PUBLIC_API_URL (default http://localhost:8000/api)
+
+AUTH
+  POST   /auth/register
+  POST   /auth/login
+  POST   /auth/logout          [Bearer]
+  GET    /auth/me              [Bearer]  → user, pack_category_ids
+
+PUBLIC
+  GET    /categories
+  GET    /plans
+
+CLIENT [Bearer]
+  GET    /categories/{slug}/models
+  POST   /models/{id}/download     → { download_url } presigned R2
+  GET    /subscriptions/current
+  POST   /subscriptions              → payer_name, payment_ref, plan_id
+  GET    /packs/purchased
+  POST   /packs/{categoryId}         → payer_name, payment_ref
+
+Admin API routes are NOT called from this frontend.
+
+
+================================================================================
+8. VERIFIED FLOWS (2026-05-29)
+================================================================================
+
+  [x] Landing + pricing load plans from API
+  [x] Register new account → auto-login → dashboard
+  [x] Login / logout
+  [x] Middleware: /dashboard and /checkout require auth; ?next= return URL works
+  [x] Library: category grid with locked/unlocked states
+  [x] Category page: models with thumbnails
+  [x] Download .skp → presigned Cloudflare R2 URL opens (tested working)
+  [x] Subscription checkout (new account) → pending in Filament → approve → access
+  [x] Pack checkout flow (same manual payment pattern)
+  [x] Duplicate checkout blocked with clear messages (422 + existing_status)
+  [x] Hydration error fixed (Navbar auth state)
+  [x] Light theme — text/buttons visible
+
+KNOWN QUIRKS (not bugs):
+  • test@example.com may already have active subscription from earlier Postman tests
+    → checkout blocked correctly; Filament default filter is Pending-only so active
+    subs are hidden until you change the status filter.
+  • Payment account is a placeholder env var — real BaridiMob integration TBD.
+  • Category cards show name placeholder, not cover images from R2 yet.
+  • Pending subscription does not show on dashboard banner (only active/beta from /auth/me).
+
+
+================================================================================
+9. BACKEND COORDINATION (CHANGES THAT AFFECT FRONTEND)
+================================================================================
+
+Backend repo (sketchup-store-api) was updated during frontend testing:
+
+  • POST /subscriptions 422 now includes:
+      existing_status, subscription (with plan)
+  • POST /packs/{id} 422 now includes:
+      existing_status, purchase (with category)
+  • Filament empty-state hints when Pending filter shows no rows
+
+Frontend uses existing_status in lib/utils.ts for user-friendly checkout errors.
+
+
+================================================================================
+10. POLISH & FUTURE WORK (NOT BLOCKING — CORE IS DONE)
+================================================================================
+
+DESIGN / UX
+  • Proper brand/design system (typography, spacing, illustrations)
+  • Category cover images from API (cover_image_key → presigned URL if added)
+  • Mobile UX (locked category overlay, nav, checkout forms)
+  • Pending subscription banner on dashboard (needs API or extend /auth/me)
+  • Success/toast notifications instead of full-page success only
+  • Footer, legal pages, contact/support
+
+PAYMENTS
+  • Real BaridiMob / Algerian Post API or agreement (currently manual + Filament)
+  • Update NEXT_PUBLIC_PAYMENT_ACCOUNT to Sarah's real number when ready
+
+AUTH / SESSION
+  • Optional: Sanctum SPA cookie mode instead of Bearer in js-cookie
+  • Password reset flow (backend not built yet)
+
+TECH
+  • next/image for thumbnails + remotePatterns for R2 host
+  • Error boundaries, retry on failed fetches
+  • E2E tests (Playwright)
+  • Production env: real domains, CORS, SANCTUM_STATEFUL_DOMAINS
+  • npm run build CI check (Google Fonts fetch in build environment)
+
+OTHER PRODUCTS
+  • SketchUp plugin (hardware_id login, same download API)
+  • Filament polish for girlfriend handoff (backend repo)
+  • Production deploy (Laravel + MySQL + R2 + Resend + Next on Vercel/similar)
+
+
+================================================================================
+11. RECOMMENDED NEXT PHASE (PICK ONE)
+================================================================================
+
+  A) DEPLOY PREP
+     Production URLs, env vars, build pipeline, smoke test on staging
+
+  B) SKETCHUP PLUGIN
+     Ruby extension: login with hardware_id, browse library, download .skp
+
+  C) PAYMENT INTEGRATION
+     When Algerian Post / BaridiMob path is clear — replace manual reference flow
+
+  D) DEEP POLISH PASS
+     Visual design, cover images, pending-state UX, mobile, tests
+
+  E) FILAMENT HANDOFF (backend repo)
+     Role tiers, relation managers, labels for non-technical admin user
+
+
+================================================================================
+12. USEFUL COMMANDS
+================================================================================
+
+  npm run dev          Local dev server :3000
+  npm run build        Production build (needs network for Google Fonts)
+  npm run lint         ESLint
+  npm run start        Serve production build
+
+Backend must be running for any API-backed page to work.
+
+
+================================================================================
+13. KEY FILES QUICK REFERENCE
+================================================================================
+
+  lib/api.ts                    All API calls — add new endpoints here
+  context/AuthContext.tsx       Session state — login/logout/refresh
+  middleware.ts                 Route guards
+  components/Navbar.tsx         Global nav
+  app/(dashboard)/dashboard/page.tsx           Library home
+  app/(public)/checkout/subscription/page.tsx  Subscribe flow
+  backendnvp.txt                Full backend API + Filament summary
+
+
+================================================================================
+END OF SUMMARY — Frontend MVP core is working. Proceed to next product phase.
+================================================================================

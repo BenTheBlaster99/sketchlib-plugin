@@ -1,0 +1,538 @@
+PART 3 — SKETCHUP PLUGIN
+
+3.1 Folder Structure
+sketchlib-plugin/
+├── sketchlib.rb           ← SketchUp entry point (registered in Extension Warehouse)
+├── sketchlib/
+│   ├── main.rb            ← loads the dialog
+│   └── bridge.rb          ← hardware ID, model insertion
+└── ui/
+    ├── package.json
+    ├── vite.config.js
+    ├── index.html
+    └── src/
+        ├── main.jsx
+        ├── App.jsx
+        ├── api.js
+        └── components/
+            ├── Login.jsx
+            ├── Library.jsx
+            └── ModelCard.jsx
+
+3.2 Ruby Files
+sketchlib.rb — SketchUp entry point
+rubyrequire 'sketchup'
+require 'extensions'
+
+module SketchLib
+  PLUGIN_DIR = File.dirname(__FILE__)
+
+  extension = SketchupExtension.new(
+    'SketchLib',
+    File.join(PLUGIN_DIR, 'sketchlib', 'main.rb')
+  )
+
+  extension.description = 'Browse and insert curated 3D furniture models from SketchLib.'
+  extension.version     = '1.0.0'
+  extension.copyright   = '2024 SketchLib'
+
+  Sketchup.register_extension(extension, true)
+end
+
+sketchlib/bridge.rb
+rubymodule SketchLib
+  module Bridge
+
+    API_URL = 'https://your-api-domain.com/api'.freeze
+
+    def self.get_hardware_id
+      begin
+        if Sketchup.platform == :platform_win
+          result = `wmic csproduct get UUID 2>nul`
+          result.split("\n").map(&:strip).reject(&:empty?).last.to_s.strip
+        else
+          result = `system_profiler SPHardwareDataType 2>/dev/null | awk '/Hardware UUID/ { print $3 }'`
+          result.strip
+        end
+      rescue => e
+        # Fallback to a combination of available system info
+        require 'digest'
+        Digest::SHA256.hexdigest(ENV['COMPUTERNAME'].to_s + ENV['USERNAME'].to_s)[0..36]
+      end
+    end
+
+    def self.insert_model(dialog, signed_url, model_name)
+      model = Sketchup.active_model
+      return unless model
+
+      begin
+        definition = model.definitions.load(signed_url)
+        transform  = Geom::Transformation.new(ORIGIN)
+        model.active_entities.add_instance(definition, transform)
+        model.active_view.zoom_extents
+
+        dialog.execute_script("window.onModelInserted('#{model_name}')")
+      rescue => e
+        dialog.execute_script("window.onInsertError('#{e.message.gsub("'", "\\'")}')")
+      end
+    end
+
+  end
+end
+
+sketchlib/main.rb
+rubyrequire_relative 'bridge'
+
+module SketchLib
+  module Main
+
+    UI_PATH = File.join(PLUGIN_DIR, 'ui', 'dist', 'index.html').freeze
+
+    def self.open_dialog
+      if @dialog && @dialog.visible?
+        @dialog.bring_to_front
+        return
+      end
+
+      @dialog = UI::HtmlDialog.new(
+        dialog_title:    'SketchLib',
+        scrollable:      false,
+        resizable:       true,
+        width:           420,
+        height:          680,
+        min_width:       380,
+        min_height:      600,
+        style:           UI::HtmlDialog::STYLE_UTILITY
+      )
+
+      @dialog.set_file(UI_PATH)
+
+      # ── JS → Ruby callbacks ────────────────────────────────────────────────
+
+      # Called when user logs in — receives token + hardware check
+      @dialog.add_action_callback('getHardwareId') do |_ctx|
+        hardware_id = Bridge.get_hardware_id
+        @dialog.execute_script("window.receiveHardwareId('#{hardware_id}')")
+      end
+
+      # Called when user wants to insert a model
+      @dialog.add_action_callback('insertModel') do |_ctx, signed_url, model_name|
+        Bridge.insert_model(@dialog, signed_url, model_name)
+      end
+
+      # Called to save token persistently
+      @dialog.add_action_callback('saveToken') do |_ctx, token|
+        Sketchup.write_default('SketchLib', 'auth_token', token)
+      end
+
+      # Called to read saved token on startup
+      @dialog.add_action_callback('getSavedToken') do |_ctx|
+        token = Sketchup.read_default('SketchLib', 'auth_token', '')
+        @dialog.execute_script("window.receiveSavedToken('#{token}')")
+      end
+
+      # Called to clear token on logout
+      @dialog.add_action_callback('clearToken') do |_ctx|
+        Sketchup.write_default('SketchLib', 'auth_token', '')
+      end
+
+      @dialog.show
+    end
+
+    # Register menu item in SketchUp's Extensions menu
+    unless file_loaded?(__FILE__)
+      menu = UI.menu('Extensions')
+      menu.add_item('SketchLib') { Main.open_dialog }
+      file_loaded(__FILE__)
+    end
+
+  end
+end
+
+3.3 Plugin React UI
+ui/package.json
+json{
+  "name": "sketchlib-ui",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.0.0",
+    "vite": "^5.0.0"
+  }
+}
+ui/vite.config.js
+javascriptimport { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+export default defineConfig({
+  plugins: [react()],
+  build: {
+    outDir: 'dist',
+    rollupOptions: {
+      output: {
+        // Single file output so SketchUp HtmlDialog can load it
+        inlineDynamicImports: true,
+        entryFileNames:   'assets/app.js',
+        chunkFileNames:   'assets/app.js',
+        assetFileNames:   'assets/app.[ext]',
+      }
+    }
+  },
+  base: './', // relative paths so HtmlDialog can find assets
+})
+
+ui/src/api.js
+javascriptconst API_URL = 'https://your-api-domain.com/api'
+
+let authToken = null
+
+export function setToken(token) {
+  authToken = token
+}
+
+async function request(method, path, body = null) {
+  const headers = { 'Content-Type': 'application/json' }
+  if (authToken) headers['Authorization'] = `Bearer ${authToken}`
+
+  const res = await fetch(`${API_URL}${path}`, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : null,
+  })
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ message: 'Request failed' }))
+    throw { status: res.status, message: err.message }
+  }
+
+  return res.json()
+}
+
+export const api = {
+  login:          (email, password, hardware_id) =>
+    request('POST', '/auth/login', { email, password, hardware_id }),
+  me:             () => request('GET', '/auth/me'),
+  logout:         () => request('POST', '/auth/logout'),
+  getCategories:  () => request('GET', '/categories'),
+  getCategoryModels: (slug) => request('GET', `/categories/${slug}/models`),
+  downloadModel:  (modelId) => request('POST', `/models/${modelId}/download`),
+}
+
+ui/src/App.jsx
+jsximport { useState, useEffect } from 'react'
+import Login from './components/Login'
+import Library from './components/Library'
+import { api, setToken } from './api'
+
+export default function App() {
+  const [token, setTokenState]   = useState(null)
+  const [user, setUser]          = useState(null)
+  const [loading, setLoading]    = useState(true)
+
+  // On mount: ask Ruby for saved token
+  useEffect(() => {
+    window.receiveSavedToken = (savedToken) => {
+      if (savedToken) {
+        setToken(savedToken)
+        setTokenState(savedToken)
+        api.me()
+          .then(res => setUser(res.user))
+          .catch(() => handleLogout())
+          .finally(() => setLoading(false))
+      } else {
+        setLoading(false)
+      }
+    }
+    window.sketchup.getSavedToken()
+  }, [])
+
+  // Feedback callbacks from Ruby
+  useEffect(() => {
+    window.onModelInserted = (modelName) => {
+      // Could show a toast notification
+      console.log(`Inserted: ${modelName}`)
+    }
+    window.onInsertError = (msg) => {
+      alert(`Failed to insert model: ${msg}`)
+    }
+  }, [])
+
+  const handleLogin = (newToken, userData) => {
+    setToken(newToken)
+    setTokenState(newToken)
+    setUser(userData)
+    window.sketchup.saveToken(newToken)
+  }
+
+  const handleLogout = () => {
+    api.logout().catch(() => {})
+    setTokenState(null)
+    setUser(null)
+    setToken(null)
+    window.sketchup.clearToken()
+  }
+
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh' }}>
+        <p style={{ color: '#888' }}>Loading...</p>
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ fontFamily: 'system-ui, sans-serif', height: '100vh', overflow: 'hidden' }}>
+      {token && user ? (
+        <Library user={user} onLogout={handleLogout} />
+      ) : (
+        <Login onLogin={handleLogin} />
+      )}
+    </div>
+  )
+}
+
+ui/src/components/Login.jsx
+jsximport { useState } from 'react'
+import { api } from '../api'
+
+export default function Login({ onLogin }) {
+  const [email, setEmail]       = useState('')
+  const [password, setPassword] = useState('')
+  const [loading, setLoading]   = useState(false)
+  const [error, setError]       = useState('')
+
+  const handleSubmit = async () => {
+    setLoading(true)
+    setError('')
+
+    try {
+      // Step 1: Ask Ruby for hardware ID
+      await new Promise((resolve) => {
+        window.receiveHardwareId = (hwId) => {
+          window._pendingHardwareId = hwId
+          resolve()
+        }
+        window.sketchup.getHardwareId()
+      })
+
+      const hardwareId = window._pendingHardwareId
+
+      // Step 2: Login with hardware ID
+      const res = await api.login(email, password, hardwareId)
+      onLogin(res.token, res.user)
+
+    } catch (err) {
+      setError(err.message || 'Login failed. Check your credentials.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const s = styles
+  return (
+    <div style={s.container}>
+      <h1 style={s.title}>SketchLib</h1>
+      <p style={s.subtitle}>Sign in to access your 3D library</p>
+
+      <input
+        style={s.input}
+        type="email"
+        placeholder="Email"
+        value={email}
+        onChange={e => setEmail(e.target.value)}
+      />
+      <input
+        style={s.input}
+        type="password"
+        placeholder="Password"
+        value={password}
+        onChange={e => setPassword(e.target.value)}
+        onKeyDown={e => e.key === 'Enter' && handleSubmit()}
+      />
+
+      {error && <p style={s.error}>{error}</p>}
+
+      <button style={s.button} onClick={handleSubmit} disabled={loading}>
+        {loading ? 'Signing in...' : 'Sign in'}
+      </button>
+    </div>
+  )
+}
+
+const styles = {
+  container: { padding: 24, display: 'flex', flexDirection: 'column', gap: 12, maxWidth: 360, margin: '80px auto 0' },
+  title:     { fontSize: 24, fontWeight: 600, margin: 0 },
+  subtitle:  { fontSize: 13, color: '#666', margin: '0 0 8px' },
+  input:     { padding: '10px 12px', border: '1px solid #ddd', borderRadius: 8, fontSize: 14, outline: 'none' },
+  button:    { padding: '11px 0', background: '#000', color: '#fff', border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 500, cursor: 'pointer' },
+  error:     { color: '#dc2626', fontSize: 13, background: '#fef2f2', padding: '8px 12px', borderRadius: 6 },
+}
+
+ui/src/components/Library.jsx
+jsximport { useState, useEffect } from 'react'
+import { api } from '../api'
+import ModelCard from './ModelCard'
+
+export default function Library({ user, onLogout }) {
+  const [categories, setCategories]   = useState([])
+  const [activeSlug, setActiveSlug]   = useState(null)
+  const [models, setModels]           = useState([])
+  const [loadingModels, setLoadingModels] = useState(false)
+  const [search, setSearch]           = useState('')
+
+  useEffect(() => {
+    api.getCategories().then(data => {
+      setCategories(data)
+      if (data.length > 0) selectCategory(data[0].slug)
+    })
+  }, [])
+
+  const selectCategory = async (slug) => {
+    setActiveSlug(slug)
+    setLoadingModels(true)
+    try {
+      const res = await api.getCategoryModels(slug)
+      setModels(res.models)
+    } catch (err) {
+      if (err.status === 403) setModels([])
+    } finally {
+      setLoadingModels(false)
+    }
+  }
+
+  const filteredModels = models.filter(m =>
+    m.name.toLowerCase().includes(search.toLowerCase())
+  )
+
+  const s = styles
+  return (
+    <div style={s.root}>
+      {/* Header */}
+      <div style={s.header}>
+        <span style={{ fontWeight: 600, fontSize: 15 }}>SketchLib</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 12, color: '#888' }}>{user.name}</span>
+          <button style={s.logoutBtn} onClick={onLogout}>Logout</button>
+        </div>
+      </div>
+
+      {/* Category tabs */}
+      <div style={s.tabs}>
+        {categories.map(cat => (
+          <button key={cat.id}
+            style={{ ...s.tab, ...(activeSlug === cat.slug ? s.tabActive : {}) }}
+            onClick={() => selectCategory(cat.slug)}>
+            {cat.name}
+          </button>
+        ))}
+      </div>
+
+      {/* Search */}
+      <div style={{ padding: '8px 12px' }}>
+        <input
+          style={{ ...styles.input, width: '100%', boxSizing: 'border-box' }}
+          placeholder="Search models..."
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+        />
+      </div>
+
+      {/* Models grid */}
+      <div style={s.grid}>
+        {loadingModels ? (
+          <p style={{ color: '#888', fontSize: 13, padding: 16 }}>Loading...</p>
+        ) : filteredModels.length === 0 ? (
+          <p style={{ color: '#888', fontSize: 13, padding: 16 }}>No models found.</p>
+        ) : (
+          filteredModels.map(model => (
+            <ModelCard key={model.id} model={model} />
+          ))
+        )}
+      </div>
+    </div>
+  )
+}
+
+const styles = {
+  root:      { display: 'flex', flexDirection: 'column', height: '100vh' },
+  header:    { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', borderBottom: '1px solid #eee' },
+  tabs:      { display: 'flex', gap: 4, padding: '8px 12px', overflowX: 'auto', borderBottom: '1px solid #eee' },
+  tab:       { padding: '5px 12px', border: '1px solid #ddd', borderRadius: 20, fontSize: 12, background: 'white', cursor: 'pointer', whiteSpace: 'nowrap' },
+  tabActive: { background: '#000', color: '#fff', border: '1px solid #000' },
+  grid:      { flex: 1, overflowY: 'auto', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, padding: 12, alignContent: 'start' },
+  input:     { padding: '8px 10px', border: '1px solid #ddd', borderRadius: 8, fontSize: 13, outline: 'none' },
+  logoutBtn: { fontSize: 11, border: '1px solid #ddd', borderRadius: 6, padding: '3px 8px', background: 'white', cursor: 'pointer' },
+}
+
+ui/src/components/ModelCard.jsx
+jsximport { useState } from 'react'
+import { api } from '../api'
+
+export default function ModelCard({ model }) {
+  const [inserting, setInserting] = useState(false)
+  const [inserted, setInserted]   = useState(false)
+
+  const handleInsert = async () => {
+    setInserting(true)
+    try {
+      const res = await api.downloadModel(model.id)
+      const signedUrl = res.download_url
+
+      // Tell Ruby to load the model into SketchUp
+      window.sketchup.insertModel(signedUrl, model.name)
+
+      // Confirmation comes back via window.onModelInserted callback
+      setTimeout(() => setInserted(true), 500)
+      setTimeout(() => setInserted(false), 2500)
+    } catch (err) {
+      alert('Could not load model. ' + (err.message || ''))
+    } finally {
+      setInserting(false)
+    }
+  }
+
+  const s = styles
+  return (
+    <div style={s.card}>
+      <img src={model.thumbnail_url} alt={model.name}
+        style={s.thumb} loading="lazy" />
+      <div style={s.info}>
+        <p style={s.name}>{model.name}</p>
+        <p style={s.meta}>
+          SU {model.sketchup_version_min}+ · {(model.file_size_bytes / 1_000_000).toFixed(1)} MB
+        </p>
+        <button
+          style={{ ...s.btn, ...(inserted ? s.btnDone : {}) }}
+          onClick={handleInsert}
+          disabled={inserting}
+        >
+          {inserting ? 'Loading...' : inserted ? '✓ Inserted!' : 'Insert model'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+const styles = {
+  card:    { border: '1px solid #eee', borderRadius: 10, overflow: 'hidden' },
+  thumb:   { width: '100%', aspectRatio: '1', objectFit: 'cover', background: '#f5f5f5', display: 'block' },
+  info:    { padding: '8px 10px 10px' },
+  name:    { fontSize: 12, fontWeight: 500, margin: '0 0 2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  meta:    { fontSize: 10, color: '#999', margin: '0 0 6px' },
+  btn:     { width: '100%', padding: '6px 0', background: '#000', color: '#fff', border: 'none', borderRadius: 6, fontSize: 11, fontWeight: 500, cursor: 'pointer' },
+  btnDone: { background: '#16a34a' },
+}
+
+Build the plugin UI:
+bashcd ui
+npm install
+npm run build
+# dist/index.html is now ready for SketchUp to load

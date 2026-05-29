@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SketchLib — Phase 1</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #fafafa;
+      color: #111;
+      padding: 20px;
+      line-height: 1.5;
+    }
+    h1 { font-size: 20px; margin: 0 0 4px; }
+    .badge {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 600;
+      background: #e0f2fe;
+      color: #0369a1;
+      padding: 2px 8px;
+      border-radius: 999px;
+      margin-bottom: 16px;
+    }
+    p.sub { font-size: 13px; color: #666; margin: 0 0 20px; }
+    section {
+      background: #fff;
+      border: 1px solid #e5e5e5;
+      border-radius: 10px;
+      padding: 14px;
+      margin-bottom: 14px;
+    }
+    section h2 { font-size: 13px; margin: 0 0 10px; text-transform: uppercase; letter-spacing: 0.04em; color: #888; }
+    button {
+      display: block;
+      width: 100%;
+      padding: 10px 12px;
+      margin-bottom: 8px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      background: #fff;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    button.primary { background: #000; color: #fff; border-color: #000; font-weight: 500; }
+    button:last-child { margin-bottom: 0; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .result {
+      font-family: ui-monospace, monospace;
+      font-size: 11px;
+      word-break: break-all;
+      background: #f5f5f5;
+      border-radius: 6px;
+      padding: 10px;
+      min-height: 40px;
+      color: #333;
+    }
+    .result.empty { color: #999; font-style: italic; font-family: inherit; }
+    .ok { color: #16a34a; font-size: 12px; margin-top: 8px; }
+    .err { color: #dc2626; font-size: 12px; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <h1>SketchLib</h1>
+  <span class="badge">Phase 1 — Ruby bridge</span>
+  <p class="sub">Confirm the HtmlDialog talks to Ruby before building the React UI.</p>
+
+  <section>
+    <h2>Hardware ID</h2>
+    <button type="button" class="primary" id="btnHardware">Get hardware ID</button>
+    <div id="hardwareResult" class="result empty">Click the button — ID should appear here.</div>
+    <div id="hardwareStatus"></div>
+  </section>
+
+  <section>
+    <h2>Token storage (Ruby preferences)</h2>
+    <button type="button" id="btnSaveToken">Save test token</button>
+    <button type="button" id="btnLoadToken">Load saved token</button>
+    <button type="button" id="btnClearToken">Clear token</button>
+    <div id="tokenResult" class="result empty">No token loaded yet.</div>
+  </section>
+
+  <script>
+    function setResult(el, text, isEmpty) {
+      el.textContent = text
+      el.classList.toggle('empty', !!isEmpty)
+    }
+
+    window.receiveHardwareId = function (id) {
+      setResult(document.getElementById('hardwareResult'), id || '(empty)', !id)
+      document.getElementById('hardwareStatus').innerHTML =
+        id ? '<p class="ok">Ruby bridge OK — hardware ID received.</p>' : '<p class="err">Empty hardware ID.</p>'
+    }
+
+    window.receiveSavedToken = function (token) {
+      setResult(
+        document.getElementById('tokenResult'),
+        token ? token : '(no saved token)',
+        !token
+      )
+    }
+
+    document.getElementById('btnHardware').onclick = function () {
+      if (!window.sketchup) {
+        document.getElementById('hardwareStatus').innerHTML =
+          '<p class="err">window.sketchup missing — open this page from SketchUp, not a browser.</p>'
+        return
+      }
+      window.sketchup.getHardwareId()
+    }
+
+    document.getElementById('btnSaveToken').onclick = function () {
+      window.sketchup.saveToken('phase1-test-token-' + Date.now())
+      setResult(document.getElementById('tokenResult'), 'Saved (click Load to verify)', false)
+    }
+
+    document.getElementById('btnLoadToken').onclick = function () {
+      window.sketchup.getSavedToken()
+    }
+
+    document.getElementById('btnClearToken').onclick = function () {
+      window.sketchup.clearToken()
+    }
+  </script>
+</body>
+</html>
