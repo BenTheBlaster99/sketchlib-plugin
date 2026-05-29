@@ -111,17 +111,60 @@ sketchlib-plugin/
 └── README.md
 ```
 
-## API URL (later phases)
+## Phase 2 — Login (current)
 
-Default in `sketchlib/bridge.rb`:
+Build the UI on **Ubuntu**, copy updated `sketchlib-plugin` (especially `ui/dist/`) to Windows Plugins again.
 
-- `http://localhost:8000/api` (local Laravel)
+### 1. On Ubuntu — set API URL and build
 
-Optional override before starting SketchUp:
+Your sister’s PC must reach **your** Laravel server (not `127.0.0.1` on her machine).
 
 ```bash
-export SKETCHLIB_API_URL=https://api.yourdomain.com/api
+cd sketchlib-plugin/ui
+cp env.example .env
+# Edit .env — use your Ubuntu Wi‑Fi IP, e.g.:
+# VITE_API_URL=http://192.168.1.42:8000/api
+nano .env
+
+npm install
+npm run build
 ```
+
+Start API so the network can connect:
+
+```bash
+cd "../../sketchup-store-api"   # adjust path to your Laravel repo
+php artisan config:clear
+php artisan serve --host=0.0.0.0 --port=8000
+```
+
+Find your IP: `hostname -I` or Settings → Wi‑Fi → details.
+
+### 2. Backend CORS
+
+`config/cors.php` allows `null` origin for SketchUp’s HtmlDialog. After pulling backend changes: `php artisan config:clear`.
+
+### 3. On Windows — update plugin
+
+Copy whole `sketchlib-plugin` + `load_sketchlib.rb` to Plugins (same as Phase 1). Restart SketchUp → open a model → **Extensions → SketchLib**.
+
+### 4. Test login
+
+- Account: `test@example.com` / `password123` (or any user from seeders).
+- Login sends `hardware_id` → plugin token on the server.
+- Success: “Signed in as …” screen. **Logout** clears token.
+- Wrong PC later → device mismatch message (403).
+
+Login screen shows **API: http://…** so you can confirm the built URL is correct.
+
+### Troubleshooting Phase 2
+
+| Error | Fix |
+|-------|-----|
+| Cannot reach API | Same Wi‑Fi; `php artisan serve --host=0.0.0.0`; Windows firewall allow port 8000; rebuild `.env` with Ubuntu IP |
+| CORS / network failed | `php artisan config:clear` on backend; pull latest `cors.php` |
+| 401 Invalid credentials | Wrong email/password |
+| 403 device linked | User already bound to another `hardware_id` — reset in Filament / DB or use new account |
 
 ## Phase 4 note (model insert)
 
@@ -158,8 +201,8 @@ Test login: `test@example.com` / `password123` with `hardware_id` in the JSON bo
 
 | Phase | Status |
 |-------|--------|
-| 1 | Ruby skeleton + bridge test HTML |
-| 2 | React login + token |
+| 1 | ✅ Ruby skeleton + bridge |
+| 2 | ✅ React login + token (build `ui/` first) |
 | 3 | Library browse UI |
 | 4 | Insert model (temp file download) |
 | 5 | Polish + production config |
