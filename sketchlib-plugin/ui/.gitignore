@@ -1,4 +1,7 @@
 node_modules
-dist
 .env
 .env.local
+
+# NOTE: dist/ is intentionally NOT ignored.
+# dist/index.html is the file SketchUp loads and must be pushed to GitHub
+# so it can be pulled/copied onto the Windows test PC.

@@ -31,7 +31,10 @@ function sketchupHtmlDialog() {
         html = html.replace('</head>', `  <style>${css}</style>\n</head>`)
       }
       if (js) {
-        html = html.replace('</body>', `  <script>${js}</script>\n</body>`)
+        // Escape any literal "</script" inside the bundle so it cannot close
+        // the inline <script> tag early (would dump JS-as-HTML → SyntaxError).
+        const safeJs = js.replace(/<\/script/gi, '<\\/script')
+        html = html.replace('</body>', `  <script>${safeJs}</script>\n</body>`)
       }
 
       fs.writeFileSync(htmlPath, html)
