@@ -4,10 +4,32 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>SketchLib</title>
-    <script src="./assets/app.js"></script>
+    <script>
+      // Make crashes visible instead of a blank white panel.
+      window.addEventListener('error', function (e) {
+        var box = document.getElementById('boot-error')
+        if (box) {
+          box.style.display = 'block'
+          box.textContent = 'JS error: ' + (e.message || e) +
+            (e.filename ? ('\n' + e.filename + ':' + e.lineno) : '')
+        }
+      })
+      window.addEventListener('unhandledrejection', function (e) {
+        var box = document.getElementById('boot-error')
+        if (box) {
+          box.style.display = 'block'
+          box.textContent = 'Promise error: ' + (e.reason && e.reason.message ? e.reason.message : e.reason)
+        }
+      })
+    </script>
+    <script defer src="./assets/app.js"></script>
     <link rel="stylesheet" href="./assets/app.css">
   </head>
   <body>
     <div id="root"></div>
+    <div id="boot-status" style="padding:20px;font-family:system-ui,sans-serif;color:#888;">
+      Loading SketchLib…
+    </div>
+    <pre id="boot-error" style="display:none;white-space:pre-wrap;padding:16px;margin:12px;background:#fef2f2;color:#b91c1c;font-size:12px;border-radius:8px;font-family:ui-monospace,monospace;"></pre>
   </body>
 </html>

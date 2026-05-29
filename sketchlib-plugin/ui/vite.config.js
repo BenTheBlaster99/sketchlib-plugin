@@ -10,8 +10,10 @@ function sketchupHtmlDialog() {
     closeBundle() {
       const htmlPath = path.resolve('dist/index.html')
       let html = fs.readFileSync(htmlPath, 'utf8')
+      // Strip type="module" (SketchUp file:// can't run modules) but keep
+      // `defer` so the script still runs AFTER #root exists in the DOM.
       html = html
-        .replace(/<script type="module" crossorigin src="([^"]+)"><\/script>/, '<script src="$1"></script>')
+        .replace(/<script type="module" crossorigin src="([^"]+)"><\/script>/, '<script defer src="$1"></script>')
         .replace(/<link rel="stylesheet" crossorigin href="([^"]+)">/, '<link rel="stylesheet" href="$1">')
       fs.writeFileSync(htmlPath, html)
     },
