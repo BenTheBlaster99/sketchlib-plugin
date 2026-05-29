@@ -3,24 +3,41 @@ import react from '@vitejs/plugin-react'
 import fs from 'fs'
 import path from 'path'
 
-/** SketchUp HtmlDialog loads file:// — ES modules often fail → white screen. */
+/**
+ * SketchUp HtmlDialog loads from file:// and is unreliable with ES modules and
+ * relative asset paths. Inline JS + CSS into a single index.html so there is
+ * exactly one file to ship and nothing to resolve.
+ */
 function sketchupHtmlDialog() {
   return {
     name: 'sketchup-html-dialog',
     closeBundle() {
-      const htmlPath = path.resolve('dist/index.html')
-      let html = fs.readFileSync(htmlPath, 'utf8')
-      // Strip type="module" (SketchUp file:// can't run modules) but keep
-      // `defer` so the script still runs AFTER #root exists in the DOM.
-      html = html
-        .replace(/<script type="module" crossorigin src="[^"]+"><\/script>\s*/g, '')
-        .replace(/<link rel="stylesheet" crossorigin href="([^"]+)">/, '<link rel="stylesheet" href="$1">')
+      const distDir = path.resolve('dist')
+      const htmlPath = path.join(distDir, 'index.html')
+      const jsPath = path.join(distDir, 'assets', 'app.js')
+      const cssPath = path.join(distDir, 'assets', 'app.css')
 
-      if (!html.includes('./assets/app.js')) {
-        html = html.replace('</body>', '  <script src="./assets/app.js"></script>\n</body>')
+      let html = fs.readFileSync(htmlPath, 'utf8')
+      const js = fs.existsSync(jsPath) ? fs.readFileSync(jsPath, 'utf8') : ''
+      const css = fs.existsSync(cssPath) ? fs.readFileSync(cssPath, 'utf8') : ''
+
+      // Remove the emitted external references.
+      html = html
+        .replace(/<script type="module"[^>]*><\/script>\s*/g, '')
+        .replace(/<script[^>]*src="\.?\/?assets\/app\.js"[^>]*><\/script>\s*/g, '')
+        .replace(/<link rel="stylesheet"[^>]*href="\.?\/?assets\/app\.css"[^>]*>\s*/g, '')
+
+      if (css) {
+        html = html.replace('</head>', `  <style>${css}</style>\n</head>`)
+      }
+      if (js) {
+        html = html.replace('</body>', `  <script>${js}</script>\n</body>`)
       }
 
       fs.writeFileSync(htmlPath, html)
+
+      // Single-file output: drop the now-inlined assets folder.
+      fs.rmSync(path.join(distDir, 'assets'), { recursive: true, force: true })
     },
   }
 }
