@@ -161,6 +161,7 @@ Login screen shows **API: http://…** so you can confirm the built URL is corre
 
 | Error | Fix |
 |-------|-----|
+| **White / blank panel** | Old build used `type="module"` — SketchUp can’t run that from `file://`. Pull latest, `npm run build`, recopy **`ui/dist/`** entire folder (index.html + assets). |
 | Cannot reach API | Same Wi‑Fi; `php artisan serve --host=0.0.0.0`; Windows firewall allow port 8000; rebuild `.env` with Ubuntu IP |
 | CORS / network failed | `php artisan config:clear` on backend; pull latest `cors.php` |
 | 401 Invalid credentials | Wrong email/password |
