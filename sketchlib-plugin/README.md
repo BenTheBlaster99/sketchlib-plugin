@@ -13,7 +13,17 @@ So Phase 1 is **not** tested by opening a file on Ubuntu. You need SketchUp runn
 | Ubuntu + this repo | Windows or Mac **with SketchUp installed** |
 | Edit Ruby/HTML here | Run SketchUp there and install the plugin folder |
 
-**Where “Extensions → SketchLib” is:** open SketchUp → top menu bar → **Extensions** (between Tools and Help on many versions) → click **SketchLib**. That opens the panel with “Get hardware ID”.
+**Where “Extensions → SketchLib” is:** you must be **inside a 3D model**, not on the start screen.
+
+1. Open SketchUp — you may only see **Home** and **Learn** (no File / Extensions). That is normal on the launcher.
+2. Click **Create new model** (or pick any template / blank file).
+3. Wait until you see the **3D workspace** (axes, ground plane, toolbar on the left).
+4. Now the top menu should show **File, Edit, View, … Extensions, … Help**.
+5. **Extensions → SketchLib** → “Get hardware ID”.
+
+If the menu bar is still hidden on Windows, press **Alt** once to show it, or click the **≡** menu (top-left) and look for **Extensions**.
+
+Still no **SketchLib** under Extensions? See **Troubleshooting** below.
 
 **Practical options from Ubuntu:**
 
@@ -59,10 +69,23 @@ Copy or symlink this entire `sketchlib-plugin` folder into your SketchUp **Plugi
 
 1. On Ubuntu: keep editing files in this repo (Cursor).
 2. Share the folder with the VM (shared folder, `scp`, or copy `sketchlib-plugin` into the VM).
-3. On Windows inside the VM, copy the folder to:
-   `C:\Users\YOUR_USER\AppData\Roaming\SketchUp\SketchUp 20XX\SketchUp\Plugins\sketchlib-plugin`
-   (create `Plugins` if it does not exist; `20XX` = your SketchUp year, e.g. 2025).
-4. Restart SketchUp → **Extensions → SketchLib**.
+3. On Windows, copy the **`sketchlib-plugin`** folder into Plugins, **and** copy **`load_sketchlib.rb`** into the Plugins **root** (same level as the folder, not inside it):
+
+   ```
+   Plugins\
+     load_sketchlib.rb          ← required loader (many SketchUp versions)
+     sketchlib-plugin\
+       sketchlib.rb
+       sketchlib\main.rb
+       sketchlib\bridge.rb
+       ui\dist\index.html
+   ```
+
+   Path example: `C:\Users\YOU\AppData\Roaming\SketchUp\SketchUp 2025\SketchUp\Plugins\`
+
+4. Restart SketchUp → create a model → **Extensions → SketchLib**.
+
+   **Do not** use Extension Manager → “Install extension” for this project — that button expects a **`.rbz`** package from Extension Warehouse, not your dev folder.
 
 **Symlink on Windows** (optional, if repo lives on a shared drive):
 
@@ -77,7 +100,8 @@ After install: **restart SketchUp** (extensions load on startup).
 
 ```
 sketchlib-plugin/
-├── sketchlib.rb          # Extension entry (SketchUp loads this)
+├── load_sketchlib.rb     # Copy to Plugins ROOT (loader — required on many PCs)
+├── sketchlib.rb          # Real extension entry (loaded by loader above)
 ├── sketchlib/
 │   ├── main.rb           # HtmlDialog + menu
 │   └── bridge.rb         # Hardware ID, API URL, insert (Phase 4)
@@ -111,6 +135,24 @@ php artisan serve
 ```
 
 Test login: `test@example.com` / `password123` with `hardware_id` in the JSON body (plugin flow).
+
+## Troubleshooting (Windows)
+
+**Only Home / Learn, no Extensions**
+- You are on the **start screen**. Create or open a model first (see above).
+
+**Extensions exists but no SketchLib**
+- **Most common fix:** copy `load_sketchlib.rb` to the **Plugins root** (next to the `sketchlib-plugin` folder). SketchUp often ignores `.rb` files inside subfolders.
+- Confirm: `%APPDATA%\SketchUp\SketchUp 20XX\SketchUp\Plugins\load_sketchlib.rb` and `...\Plugins\sketchlib-plugin\ui\dist\index.html` (year must match installed SketchUp).
+- Fully **quit** SketchUp (File → Exit), reopen, open a model again.
+- **Window → Extension Manager**: see if **SketchLib** is listed and enabled (checkbox on).
+- **Window → Ruby Console** after startup: look for red errors mentioning `sketchlib`.
+
+**Wrong app**
+- **SketchUp Viewer** or browser-only SketchUp cannot load this plugin. You need **SketchUp Pro** or **desktop trial** from [sketchup.com/download](https://www.sketchup.com/download).
+
+**Errors on startup**
+- Ruby Console: **Window → Ruby Console** — red errors about `sketchlib` help debug (copy the message back to dev).
 
 ## Build phases
 
