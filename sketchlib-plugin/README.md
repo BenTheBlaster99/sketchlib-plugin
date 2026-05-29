@@ -52,7 +52,7 @@ You do **not** need the Laravel API running on her PC for Phase 1 — only Sketc
 1. **Get hardware ID** — stable machine UUID (on Windows: WMIC; Mac: system_profiler; Linux path in code is for rare Linux hosts only).
 2. **Save / Load / Clear token** — Ruby `Sketchup.write_default` / `read_default`.
 
-Opening `ui/dist/index.html` in Firefox/Chrome on Ubuntu will **not** work (`window.sketchup` is missing). That is expected.
+Opening `ui/dist/shell.html` in a browser will **not** work (`window.sketchup` is missing). Ruby injects `app.js` when the panel opens in SketchUp.
 
 No React build required yet.
 
@@ -78,7 +78,9 @@ Copy or symlink this entire `sketchlib-plugin` folder into your SketchUp **Plugi
        sketchlib.rb
        sketchlib\main.rb
        sketchlib\bridge.rb
-       ui\dist\index.html
+       ui\dist\shell.html
+       ui\dist\app.js      (~148 KB — must not be 104 KB or old index.html)
+       ui\dist\app.css
    ```
 
    Path example: `C:\Users\YOU\AppData\Roaming\SketchUp\SketchUp 2025\SketchUp\Plugins\`
@@ -107,7 +109,9 @@ sketchlib-plugin/
 │   └── bridge.rb         # Hardware ID, API URL, insert (Phase 4)
 ├── ui/
 │   └── dist/
-│       └── index.html    # Phase 1 placeholder (Phase 2+ → Vite React build)
+│       ├── shell.html    # UI shell (small)
+│       ├── app.js        # React bundle (~148 KB) — Ruby injects at runtime
+│       └── app.css
 └── README.md
 ```
 
@@ -161,7 +165,7 @@ Login screen shows **API: http://…** so you can confirm the built URL is corre
 
 | Error | Fix |
 |-------|-----|
-| **White / blank panel** | Old build used `type="module"` — SketchUp can’t run that from `file://`. Pull latest, `npm run build`, recopy **`ui/dist/`** entire folder (index.html + assets). |
+| **White / blank / SyntaxError** | Wrong UI files. Delete old **`index.html`** (~104 KB). Need **`app.js` ~148 KB** + **`shell.html`**. Pull latest, `npm run build`, copy whole `ui/dist/`. |
 | Cannot reach API | Same Wi‑Fi; `php artisan serve --host=0.0.0.0`; Windows firewall allow port 8000; rebuild `.env` with Ubuntu IP |
 | CORS / network failed | `php artisan config:clear` on backend; pull latest `cors.php` |
 | 401 Invalid credentials | Wrong email/password |
@@ -187,7 +191,7 @@ Test login: `test@example.com` / `password123` with `hardware_id` in the JSON bo
 
 **Extensions exists but no SketchLib**
 - **Most common fix:** copy `load_sketchlib.rb` to the **Plugins root** (next to the `sketchlib-plugin` folder). SketchUp often ignores `.rb` files inside subfolders.
-- Confirm: `%APPDATA%\SketchUp\SketchUp 20XX\SketchUp\Plugins\load_sketchlib.rb` and `...\Plugins\sketchlib-plugin\ui\dist\index.html` (year must match installed SketchUp).
+- Confirm: `load_sketchlib.rb` in Plugins root and `ui\dist\app.js` is **~148 KB** (not 104 KB, not missing).
 - Fully **quit** SketchUp (File → Exit), reopen, open a model again.
 - **Window → Extension Manager**: see if **SketchLib** is listed and enabled (checkbox on).
 - **Window → Ruby Console** after startup: look for red errors mentioning `sketchlib`.
@@ -204,6 +208,6 @@ Test login: `test@example.com` / `password123` with `hardware_id` in the JSON bo
 |-------|--------|
 | 1 | ✅ Ruby skeleton + bridge |
 | 2 | ✅ React login + token |
-| 3 | ✅ Library browse + insert button (rebuild `ui/`, copy `dist/index.html`) |
+| 3 | ✅ Library browse + insert (rebuild `ui/`, copy `dist/shell.html` + `app.js` + `app.css`) |
 | 4 | Harden insert (temp download — in bridge; test on Windows) |
 | 5 | Polish + production config |
