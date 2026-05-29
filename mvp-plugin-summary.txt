@@ -1,0 +1,179 @@
+================================================================================
+SKETCHLIB — SKETCHUP PLUGIN WORKING SUMMARY
+================================================================================
+Project folder : sketchlib-plugin (inside "sketchup plugin" workspace)
+Backend API    : sketchup-store-api @ http://<ubuntu-lan-ip>:8000/api
+Frontend web   : sketchup-store-web (separate; not this plugin)
+SketchUp tested: 2026 (Windows — sister's PC)
+Last updated   : 2026-05-29
+
+This is a handoff summary of what we built and tested. Not a full spec — enough
+to continue work (e.g. model updates, polish, production).
+
+
+================================================================================
+1. WHAT THE PLUGIN IS
+================================================================================
+
+Ruby extension + HtmlDialog panel inside SketchUp. Users log in with the same
+Laravel API as the website. Plugin login sends hardware_id (one PC per account).
+Browse categories → download .skp via presigned URL → Ruby inserts into the
+active SketchUp model.
+
+Stack:
+  • Ruby: sketchlib.rb, sketchlib/main.rb, sketchlib/bridge.rb
+  • UI: React 18 + Vite → single inlined index.html for SketchUp file://
+  • Loader: load_sketchlib.rb must sit in Plugins ROOT (not only subfolder)
+
+
+================================================================================
+2. BUILD PHASES — STATUS
+================================================================================
+
+PHASE 1 — RUBY BRIDGE ✅
+  Extension registers, Extensions → SketchLib menu, HtmlDialog opens.
+  Ruby callbacks: getHardwareId, saveToken, getSavedToken, clearToken.
+  Placeholder HTML tested hardware ID + token storage.
+  Lesson: SketchUp only auto-loads .rb in Plugins root → load_sketchlib.rb.
+
+PHASE 2 — AUTH ✅
+  React login UI, POST /auth/login with hardware_id, token in SketchUp prefs.
+  API URL baked at build time (VITE_API_URL in ui/.env).
+  Tested: test@example.com on sister's PC against Ubuntu API on LAN.
+  Backend: cors.php allows Origin null for HtmlDialog.
+  Fixes along the way: no ES modules in SketchUp; inline JS/CSS into one
+  index.html (~150 KB); bridge timeouts; waitForSketchup().
+
+PHASE 3 — LIBRARY + INSERT ✅ (built; test insert on Windows)
+  Category tabs, search, model grid, thumbnails from API.
+  Access gating: beta / active sub = full library; pack-only = locked tabs (🔒).
+  Insert model: POST /models/{id}/download → Ruby download_and_insert (temp
+  .skp file, not direct URL load — R2 presigned URLs break definitions.load).
+
+PHASE 4 — (partially done in code, verify on Windows)
+  download_and_insert in bridge.rb — needs real insert test on her PC.
+
+PHASE 5 — NOT DONE
+  Production API URL, UX polish, error handling, Extension Warehouse packaging.
+
+
+================================================================================
+3. INSTALL (WINDOWS — SISTER'S PC)
+================================================================================
+
+  Plugins\
+    load_sketchlib.rb
+    sketchlib-plugin\
+      sketchlib.rb, sketchlib\, ui\dist\index.html  (only file in dist/)
+
+  Open a 3D model first (not Home screen) → Extensions → SketchLib.
+
+Dev on Ubuntu: edit code → npm run build in ui/ → push/copy → restart SketchUp.
+
+
+================================================================================
+4. API ENDPOINTS THE PLUGIN USES
+================================================================================
+
+  POST   /auth/login          { email, password, hardware_id }
+  GET    /auth/me              → user, pack_category_ids
+  POST   /auth/logout
+  GET    /categories           (public)
+  GET    /categories/{slug}/models
+  POST   /models/{id}/download → { download_url }
+
+
+================================================================================
+5. ISSUES WE HIT & FIXES
+================================================================================
+
+  • SketchUp not on Ubuntu — test on Windows PC, API on Ubuntu LAN.
+  • Extensions menu only after creating/opening a model.
+  • Plugin not listed until load_sketchlib.rb in Plugins root.
+  • White screen / "Loading SketchLib…" — file:// + modules + missing app.js;
+    fixed by single inlined index.html.
+  • Sister PC: copy whole folder; dist is ONE index.html (~150 KB), no assets/.
+
+
+================================================================================
+6. MODELS & CONTENT — RELEVANT FOR "UPDATING MODELS" DISCUSSION
+================================================================================
+
+Where models live today:
+  • DB: sketchup_models (metadata, category, file_key, thumbnail, publish flag)
+  • Files: Cloudflare R2 (.skp + thumbnails) — presigned URLs on download
+  • Admin: Filament on Laravel — upload, publish, categories
+
+What the plugin does NOT have yet:
+  • No "check for updates" or version sync in the plugin
+  • No cache of .skp files locally — each insert = fresh download
+  • No push notification when admin drops new models
+  • Plugin always reads live API lists (GET categories / models) — new published
+    models appear on next panel open or category refresh (no auto-refresh timer)
+
+If you add "model updates" you might touch:
+  • Backend: model version field, updated_at, notify endpoint (email exists:
+    POST /admin/notify/new-models — not wired to plugin)
+  • Plugin: poll or manual refresh, show "new" badge, re-download on insert
+  • R2: same presigned download flow; file_key change = new URL
+
+Hardware lock unchanged: one plugin device per user (hardware_id on users table).
+
+
+================================================================================
+7. KEY FILES
+================================================================================
+
+  sketchlib-plugin/sketchlib.rb
+  sketchlib-plugin/load_sketchlib.rb          → copy to Plugins root
+  sketchlib-plugin/sketchlib/main.rb          → HtmlDialog + callbacks
+  sketchlib-plugin/sketchlib/bridge.rb        → hardware ID, download_and_insert
+  sketchlib-plugin/ui/src/                    → React source
+  sketchlib-plugin/ui/dist/index.html         → ship this to SketchUp
+  sketchlib-plugin/ui/.env                    → VITE_API_URL before npm run build
+  sketchlib-plugin/README.md
+
+Related repos:
+  sketchup-store-api/mvp-working-summary.txt   (backend handoff)
+  sketchup-store-web/mvpFurtniture.txt           (frontend handoff)
+  mvp plugin.txt                                 (original plugin spec)
+
+
+================================================================================
+8. COMMANDS CHEAT SHEET
+================================================================================
+
+  cd sketchlib-plugin/ui
+  cp env.example .env    # set VITE_API_URL=http://<ubuntu-ip>:8000/api
+  npm install && npm run build
+
+  cd sketchup-store-api
+  php artisan serve --host=0.0.0.0 --port=8000
+  php artisan config:clear   # after cors change
+
+
+================================================================================
+9. TESTING STRATEGY (no Sarah models yet)
+================================================================================
+
+PHASE 3 (library UI) — surface level is enough
+  • Demo seeders already give 3 categories + 6 model rows in MySQL.
+  • Plugin only needs API + thumbnails in JSON; no real .skp required to prove tabs,
+    search, grid, locked categories, login.
+  • Thumbnails may 404 if R2/files not uploaded — UI still testable.
+
+PHASE 4 (insert) — one real .skp, not Sarah's catalog
+  • Does NOT need Sarah's furniture. Any valid .skp works (e.g. test-cube.skp).
+  • Proves: presigned download → temp file → definitions.load → instance in scene.
+  • On sister's PC: draw a box → Save As test-cube.skp → Filament: attach to a
+    seeded model (or new row) with file upload / presign flow → Insert in plugin.
+
+WHEN TO INVOLVE SARAH
+  • After R2 is production-ready (FILESYSTEM_DISK=r2, keys in .env).
+  • First batch 5–10 models to validate: Filament upload → R2 → download → insert.
+  • Until then she can keep modeling; don't block on her files for dev testing.
+
+
+================================================================================
+END — Plugin MVP: login + library + insert path built. Test cube for Phase 4.
+================================================================================

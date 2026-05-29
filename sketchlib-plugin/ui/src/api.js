@@ -48,4 +48,10 @@ export const api = {
   me: () => request('GET', '/auth/me'),
 
   logout: () => request('POST', '/auth/logout'),
+
+  getCategories: () => request('GET', '/categories'),
+
+  getCategoryModels: (slug) => request('GET', `/categories/${slug}/models`),
+
+  downloadModel: (modelId) => request('POST', `/models/${modelId}/download`),
 }

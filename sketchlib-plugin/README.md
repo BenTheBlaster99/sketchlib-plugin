@@ -203,7 +203,7 @@ Test login: `test@example.com` / `password123` with `hardware_id` in the JSON bo
 | Phase | Status |
 |-------|--------|
 | 1 | ✅ Ruby skeleton + bridge |
-| 2 | ✅ React login + token (build `ui/` first) |
-| 3 | Library browse UI |
-| 4 | Insert model (temp file download) |
+| 2 | ✅ React login + token |
+| 3 | ✅ Library browse + insert button (rebuild `ui/`, copy `dist/index.html`) |
+| 4 | Harden insert (temp download — in bridge; test on Windows) |
 | 5 | Polish + production config |
