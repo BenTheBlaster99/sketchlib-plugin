@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SketchLib</title>
+    <script>
+      window.addEventListener('error', function (e) {
+        var box = document.getElementById('boot-error')
+        if (box) {
+          box.style.display = 'block'
+          box.textContent = 'JS error: ' + (e.message || e) +
+            (e.filename ? ('\n' + e.filename + ':' + e.lineno) : '')
+        }
+      })
+      window.addEventListener('unhandledrejection', function (e) {
+        var box = document.getElementById('boot-error')
+        if (box) {
+          box.style.display = 'block'
+          box.textContent = 'Promise error: ' + (e.reason && e.reason.message ? e.reason.message : e.reason)
+        }
+      })
+      setTimeout(function () {
+        var s = document.getElementById('boot-status')
+        if (!s) return
+        s.style.color = '#b91c1c'
+        s.textContent =
+          'App did not start. Re-copy ui/dist/app.js (~147 KB) + shell.html, restart SketchUp.'
+      }, 6000)
+    </script>
+    <!-- SKETCHLIB_CSS -->
+  </head>
+  <body>
+    <div id="root"></div>
+    <div id="boot-status" style="padding:20px;font-family:system-ui,sans-serif;color:#888;">
+      Loading SketchLib…
+    </div>
+    <pre id="boot-error" style="display:none;white-space:pre-wrap;padding:16px;margin:12px;background:#fef2f2;color:#b91c1c;font-size:12px;border-radius:8px;font-family:ui-monospace,monospace;"></pre>
+    <!-- SKETCHLIB_APP_JS -->
+  </body>
+</html>

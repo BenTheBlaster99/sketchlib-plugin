@@ -4,7 +4,49 @@ require_relative 'bridge'
 
 module SketchLib
   module Main
-    UI_PATH = File.join(SketchLib::PLUGIN_DIR, 'ui', 'dist', 'index.html').freeze
+    DIST_DIR   = File.join(SketchLib::PLUGIN_DIR, 'ui', 'dist').freeze
+    SHELL_PATH = File.join(DIST_DIR, 'shell.html').freeze
+    JS_PATH    = File.join(DIST_DIR, 'app.js').freeze
+    CSS_PATH   = File.join(DIST_DIR, 'app.css').freeze
+
+    # app.js must be the full Vite bundle (~140KB+). Smaller = stale/wrong copy from GitHub.
+    MIN_APP_JS_BYTES = 100_000
+
+    def self.ui_files_ok?
+      return false unless File.exist?(SHELL_PATH) && File.exist?(JS_PATH)
+
+      File.size(JS_PATH) >= MIN_APP_JS_BYTES
+    end
+
+    def self.ui_error_message
+      js_size = File.exist?(JS_PATH) ? File.size(JS_PATH) : 0
+      <<~MSG.strip
+        SketchLib UI files missing or outdated.
+
+        Expected in:
+        #{DIST_DIR}
+
+        • shell.html (small)
+        • app.js (~147 KB) — you have #{js_size} bytes
+        • app.css (optional)
+
+        Push/pull the latest repo, then copy the whole sketchlib-plugin folder.
+        Do NOT use an old index.html (~104 KB); that file is no longer used.
+      MSG
+    end
+
+    def self.build_ui_html
+      shell = File.read(SHELL_PATH)
+      js = File.read(JS_PATH)
+      css = File.exist?(CSS_PATH) ? File.read(CSS_PATH) : ''
+
+      safe_js = js.gsub(%r{</script}i, '<\\/script')
+      safe_css = css.gsub(%r{</style}i, '<\\/style')
+
+      shell
+        .sub('<!-- SKETCHLIB_CSS -->', css.empty? ? '' : "<style>#{safe_css}</style>")
+        .sub('<!-- SKETCHLIB_APP_JS -->', "<script>#{safe_js}</script>")
+    end
 
     def self.open_dialog
       if @dialog&.visible?
@@ -12,11 +54,8 @@ module SketchLib
         return
       end
 
-      unless File.exist?(UI_PATH)
-        UI.messagebox(
-          "SketchLib UI not found:\n#{UI_PATH}\n\nExpected ui/dist/index.html (Phase 1 placeholder).",
-          MB_OK
-        )
+      unless ui_files_ok?
+        UI.messagebox(ui_error_message, MB_OK)
         return
       end
 
@@ -31,7 +70,7 @@ module SketchLib
         style: UI::HtmlDialog::STYLE_UTILITY
       )
 
-      @dialog.set_file(UI_PATH)
+      @dialog.set_html(build_ui_html)
 
       @dialog.add_action_callback('getHardwareId') do |_ctx|
         hardware_id = Bridge.get_hardware_id
