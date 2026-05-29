@@ -21,6 +21,13 @@
           box.textContent = 'Promise error: ' + (e.reason && e.reason.message ? e.reason.message : e.reason)
         }
       })
+      setTimeout(function () {
+        var s = document.getElementById('boot-status')
+        if (!s) return
+        s.style.color = '#b91c1c'
+        s.textContent =
+          'App did not start. Check Plugins/sketchlib-plugin/ui/dist/assets/app.js exists (~147 KB).'
+      }, 6000)
     </script>
   </head>
   <body>

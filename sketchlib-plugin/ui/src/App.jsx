@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import Login from './components/Login'
 import LoggedIn from './components/LoggedIn'
 import { api, setToken, getApiUrl } from './api'
-import { getSavedToken, saveToken, clearToken, hasSketchupBridge } from './sketchup'
+import { getSavedToken, saveToken, clearToken, waitForSketchup } from './sketchup'
 
 export default function App() {
   const [token, setTokenState] = useState(null)
@@ -24,13 +24,17 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    if (!hasSketchupBridge()) {
-      setBridgeError('Open this panel from SketchUp: Extensions → SketchLib')
-      setLoading(false)
-      return
-    }
+    let cancelled = false
 
-    getSavedToken()
+    waitForSketchup().then((ready) => {
+      if (cancelled) return
+      if (!ready) {
+        setBridgeError('SketchUp bridge not ready. Close the panel and open Extensions → SketchLib again.')
+        setLoading(false)
+        return
+      }
+
+      return getSavedToken()
       .then((savedToken) => {
         if (!savedToken) {
           setLoading(false)
@@ -41,7 +45,14 @@ export default function App() {
         return api.me().then((res) => setUser(res.user))
       })
       .catch(() => handleLogout())
-      .finally(() => setLoading(false))
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    })
+
+    return () => {
+      cancelled = true
+    }
   }, [handleLogout])
 
   const handleLogin = (newToken, userData) => {

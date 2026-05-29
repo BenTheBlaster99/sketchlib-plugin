@@ -13,8 +13,13 @@ function sketchupHtmlDialog() {
       // Strip type="module" (SketchUp file:// can't run modules) but keep
       // `defer` so the script still runs AFTER #root exists in the DOM.
       html = html
-        .replace(/<script type="module" crossorigin src="([^"]+)"><\/script>/, '<script defer src="$1"></script>')
+        .replace(/<script type="module" crossorigin src="[^"]+"><\/script>\s*/g, '')
         .replace(/<link rel="stylesheet" crossorigin href="([^"]+)">/, '<link rel="stylesheet" href="$1">')
+
+      if (!html.includes('./assets/app.js')) {
+        html = html.replace('</body>', '  <script src="./assets/app.js"></script>\n</body>')
+      }
+
       fs.writeFileSync(htmlPath, html)
     },
   }

@@ -21,8 +21,14 @@
           box.textContent = 'Promise error: ' + (e.reason && e.reason.message ? e.reason.message : e.reason)
         }
       })
+      setTimeout(function () {
+        var s = document.getElementById('boot-status')
+        if (!s) return
+        s.style.color = '#b91c1c'
+        s.textContent =
+          'App did not start. Check Plugins/sketchlib-plugin/ui/dist/assets/app.js exists (~147 KB).'
+      }, 6000)
     </script>
-    <script defer src="./assets/app.js"></script>
     <link rel="stylesheet" href="./assets/app.css">
   </head>
   <body>
@@ -31,5 +37,6 @@
       Loading SketchLib…
     </div>
     <pre id="boot-error" style="display:none;white-space:pre-wrap;padding:16px;margin:12px;background:#fef2f2;color:#b91c1c;font-size:12px;border-radius:8px;font-family:ui-monospace,monospace;"></pre>
-  </body>
+    <script src="./assets/app.js"></script>
+</body>
 </html>

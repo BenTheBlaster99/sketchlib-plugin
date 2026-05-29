@@ -1,7 +1,36 @@
 /** Ruby HtmlDialog bridge (window.sketchup). */
 
+const BRIDGE_TIMEOUT_MS = 4000
+
 export function hasSketchupBridge() {
   return typeof window.sketchup !== 'undefined'
+}
+
+/** SketchUp sometimes injects `sketchup` shortly after the page loads. */
+export function waitForSketchup(maxMs = 3000) {
+  return new Promise((resolve) => {
+    if (hasSketchupBridge()) {
+      resolve(true)
+      return
+    }
+    const start = Date.now()
+    const timer = setInterval(() => {
+      if (hasSketchupBridge()) {
+        clearInterval(timer)
+        resolve(true)
+      } else if (Date.now() - start >= maxMs) {
+        clearInterval(timer)
+        resolve(false)
+      }
+    }, 50)
+  })
+}
+
+function withTimeout(promise, ms, fallback) {
+  return Promise.race([
+    promise,
+    new Promise((resolve) => setTimeout(() => resolve(fallback), ms)),
+  ])
 }
 
 export function getHardwareId() {
@@ -16,14 +45,14 @@ export function getHardwareId() {
 }
 
 export function getSavedToken() {
-  return new Promise((resolve) => {
-    if (!hasSketchupBridge()) {
-      resolve('')
-      return
-    }
+  if (!hasSketchupBridge()) return Promise.resolve('')
+
+  const tokenPromise = new Promise((resolve) => {
     window.receiveSavedToken = (token) => resolve(token || '')
     window.sketchup.getSavedToken()
   })
+
+  return withTimeout(tokenPromise, BRIDGE_TIMEOUT_MS, '')
 }
 
 export function saveToken(token) {
