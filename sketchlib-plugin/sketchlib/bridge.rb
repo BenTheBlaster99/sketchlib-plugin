@@ -81,7 +81,7 @@ module SketchLib
       model = Sketchup.active_model
       raise 'No active model' unless model
 
-      definition = model.definitions.load(tmp.path)
+      definition = load_skp_definition(model, tmp.path)
       transform = Geom::Transformation.new(ORIGIN)
       model.active_entities.add_instance(definition, transform)
       model.active_view.zoom_extents
@@ -91,12 +91,64 @@ module SketchLib
       dialog.execute_script("window.onModelInserted && window.onModelInserted('#{safe_name}')")
     rescue StandardError => e
       tmp&.unlink
-      safe_msg = e.message.gsub("'", "\\\\'")
+      safe_msg = friendly_insert_error(e).gsub("'", "\\\\'")
       dialog.execute_script("window.onInsertError && window.onInsertError('#{safe_msg}')")
     end
 
     def self.insert_model(dialog, signed_url, model_name)
       download_and_insert(dialog, signed_url, model_name)
+    end
+
+    # Load .skp across SketchUp 2020–2026. Newer file formats need allow_newer (SU 2022+).
+    def self.load_skp_definition(model, path)
+      defs = model.definitions
+      load_definition(defs, path, use_allow_newer: true)
+    rescue ArgumentError
+      # SketchUp 2020–2021: no allow_newer keyword on DefinitionList#load
+      load_definition(defs, path, use_allow_newer: false)
+    end
+
+    def self.load_definition(defs, path, use_allow_newer:)
+      if use_allow_newer
+        defs.load(path, allow_newer: true)
+      else
+        defs.load(path)
+      end
+    rescue RuntimeError => e
+      raise version_mismatch_error(e) if newer_version_error?(e)
+      raise
+    end
+
+    def self.newer_version_error?(error)
+      error.message.match?(/newer model version|allow_newer/i)
+    end
+
+    def self.version_mismatch_error(_original)
+      RuntimeError.new(
+        "This model was saved in a newer SketchUp version. You are on SketchUp #{sketchup_year_label}. " \
+        'Use SketchUp 2022 or newer for the full catalog, or models exported for your version.'
+      )
+    end
+
+    def self.friendly_insert_error(error)
+      return error.message unless newer_version_error?(error)
+
+      version_mismatch_error(error).message
+    end
+
+    def self.sketchup_year_label
+      major = sketchup_major_version.to_i
+      return "20#{major}" if major >= 20 && major < 100
+
+      Sketchup.version.to_s
+    rescue StandardError
+      'your SketchUp version'
+    end
+
+    def self.sketchup_major_version
+      Sketchup.version.to_f
+    rescue StandardError
+      0.0
     end
   end
 end

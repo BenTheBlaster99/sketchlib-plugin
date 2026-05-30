@@ -1,6 +1,8 @@
 # Install the SketchLib Plugin
 
-You need: **SketchUp 2024+** (Windows or Mac) and a SketchLib account.
+You need: **SketchUp 2020–2026** (Windows or Mac) and a SketchLib account.
+
+Models from the library are saved in recent SketchUp versions. **2022 and newer** can open them automatically. On **2020–2021**, only models exported for your version will insert.
 
 ## 1. Unzip
 Extract the downloaded `.zip`.
