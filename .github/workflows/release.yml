@@ -1,0 +1,45 @@
+name: Build and attach RBZ release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v1.0.1-beta)'
+        required: true
+        default: v1.0.1-beta
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: sketchlib-plugin/ui/package-lock.json
+
+      - name: Build UI
+        run: |
+          cd sketchlib-plugin/ui
+          npm ci
+          npm run build
+
+      - name: Build RBZ
+        run: |
+          chmod +x sketchlib-plugin/build-rbz.sh
+          ./sketchlib-plugin/build-rbz.sh "${{ github.event.inputs.tag || github.ref_name }}"
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: dist/*.rbz
+          fail_on_unmatched_files: true
