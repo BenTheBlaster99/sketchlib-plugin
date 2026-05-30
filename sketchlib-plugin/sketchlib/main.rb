@@ -30,7 +30,7 @@ module SketchLib
         • app.js (~147 KB) — you have #{js_size} bytes
         • app.css (optional)
 
-        Push/pull the latest repo, then copy the whole sketchlib-plugin folder.
+        Reinstall the latest .rbz from the website, or rebuild ui/dist and run build-rbz.sh.
         Do NOT use an old index.html (~104 KB); that file is no longer used.
       MSG
     end

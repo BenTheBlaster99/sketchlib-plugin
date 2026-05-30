@@ -4,24 +4,20 @@ You need: **SketchUp 2020–2026** (Windows or Mac) and a SketchLib account.
 
 Models from the library are saved in recent SketchUp versions. **2022 and newer** can open them automatically. On **2020–2021**, only models exported for your version will insert.
 
-## 1. Unzip
-Extract the downloaded `.zip`.
+## Easy install (.rbz — recommended)
 
-## 2. Open your SketchUp Plugins folder
-- **Windows:** press `Win + R`, paste `%APPDATA%\SketchUp\SketchUp 2026\SketchUp\Plugins` and press Enter.
-- **Mac:** `~/Library/Application Support/SketchUp 2026/SketchUp/Plugins`
+1. Download **`sketchlib-1.0.1-beta.rbz`** from the website or GitHub release.
+2. Open SketchUp → **Window → Preferences → Extensions**.
+3. Click **Install Extension…** and choose the `.rbz` file.
+4. If SketchUp asks about loading unsigned extensions, allow it (Extension Manager → **Unrestricted** or approve when prompted).
+5. Open a model → **Extensions → SketchLib** → sign in with your website email and password.
 
-(Use your SketchUp year if it isn't 2026.)
+No unzipping, no Plugins folder, no restart required (SketchUp loads it after install).
 
-## 3. Copy two things into that Plugins folder
-- `load_sketchlib.rb`
-- the `sketchlib-plugin` folder
+## Manual install (zip — developers only)
 
-## 4. Open it
-Restart SketchUp → start a new model → menu **Extensions → SketchLib** → sign in.
+Only if you cannot use `.rbz`: unzip, then copy `load_sketchlib.rb` and the `sketchlib-plugin` folder into your SketchUp **Plugins** folder. Restart SketchUp.
 
 ---
 
-Use the same email and password as the website. One computer per account.
-
-Problems? Make sure you restarted SketchUp and opened a model first.
+One computer per account. Open a 3D model first — the Extensions menu appears after you leave the Home screen.
