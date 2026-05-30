@@ -1,538 +1,449 @@
-PART 3 — SKETCHUP PLUGIN
+================================================================================
+SKETCHLIB — SKETCHUP PLUGIN: WORKING SUMMARY & DEPLOY HANDOFF
+================================================================================
+Replaces the original Part 3 build spec (code snippets). Use this file with:
+  • sketchup-store-api/mvp-working-summary.txt  (backend)
+  • sketchup-store-web/mvpFurtniture.txt        (Next.js storefront)
 
-3.1 Folder Structure
+Project folder : sketchlib-plugin/  (workspace: "sketchup plugin")
+Last updated   : 2026-05-29
+Status         : MVP COMPLETE — login, library, insert verified end-to-end
+
+
+================================================================================
+1. EXECUTIVE SUMMARY — YES, EVERYTHING WORKS
+================================================================================
+
+The full product loop is proven on a two-PC dev setup:
+
+  Sarah/admin uploads .skp → Cloudflare R2 (presign PUT)
+       → Filament model row (file_key)
+            → Laravel presigned download URL
+                 → SketchUp plugin (sister's Windows PC, SketchUp 2026)
+                      → Ruby temp download → definitions.load → model in scene
+
+Verified 2026-05-29:
+  [x] Phase 1 — Ruby ↔ HtmlDialog bridge (hardware ID, token prefs)
+  [x] Phase 2 — Login over LAN with hardware_id + Sanctum plugin token
+  [x] Phase 3 — Category tabs, search, model grid, access gating
+  [x] Phase 4 — Insert real test-cube.skp from R2 (Test Cube model)
+  [x] Backend R2, presign, download, nullable thumbnail_key
+
+What remains is not architecture — it is polish, content (Sarah's catalog), and
+production deployment (Laravel + Next.js + plugin rebuild with prod API URL).
+
+
+================================================================================
+2. SYSTEM MAP (THREE CLIENTS, ONE API)
+================================================================================
+
+                    ┌─────────────────────────────┐
+                    │   sketchup-store-api      │
+                    │   Laravel 13 + MySQL        │
+                    │   Filament /admin           │
+                    │   Cloudflare R2 (private)   │
+                    └──────────────┬──────────────┘
+                                   │ /api
+           ┌───────────────────────┼───────────────────────┐
+           │                       │                       │
+           ▼                       ▼                       ▼
+  sketchup-store-web      sketchlib-plugin          Postman / automation
+  Next.js :3000           SketchUp HtmlDialog       admin presign, tests
+  Bearer in js-cookie     Bearer in Ruby prefs
+  web Sanctum token       plugin Sanctum token
+  no hardware_id          hardware_id required
+
+Plugin auth is separate from web: same email can have web token + plugin token;
+plugin enforces one machine per account via users.hardware_id.
+
+
+================================================================================
+3. PLUGIN — WHAT WAS BUILT (PHASES)
+================================================================================
+
+PHASE 1 — Ruby skeleton ✅
+  • sketchlib.rb registers SketchupExtension
+  • sketchlib/main.rb — UI::HtmlDialog, Extensions → SketchLib menu
+  • sketchlib/bridge.rb — get_hardware_id (Win / Mac / Linux fallback)
+  • Ruby callbacks: getHardwareId, saveToken, getSavedToken, clearToken,
+    insertModel
+  • load_sketchlib.rb MUST live in Plugins ROOT (SketchUp ignores .rb in subdirs)
+
+PHASE 2 — Auth UI ✅
+  • React 18 + Vite, built to ui/dist/
+  • Login: POST /auth/login { email, password, hardware_id }
+  • Token stored via Sketchup.write_default('SketchLib', 'auth_token')
+  • API URL baked at build: VITE_API_URL in ui/.env → npm run build
+  • Backend CORS: allowed_origins includes 'null' (HtmlDialog file://)
+
+PHASE 3 — Library UI ✅
+  • Library.jsx — category tabs, search, 2-column grid
+  • ModelCard.jsx — thumbnail, metadata, Insert button
+  • access.js — beta / active subscription = full access; pack-only = 🔒 tabs
+  • GET /auth/me → pack_category_ids for gating
+
+PHASE 4 — Insert ✅ (verified on sister's PC)
+  • POST /models/{id}/download → presigned R2 URL
+  • bridge.rb download_and_insert: Net::HTTP → Tempfile .skp → definitions.load
+    → add_instance → unlink temp (never definitions.load(URL) — R2 query strings
+    break SketchUp)
+  • Test: test-cube.skp uploaded via presign → Filament "Test Cube" → Insert OK
+
+PHASE 5 — NOT DONE (pre-deploy polish)
+  • Production VITE_API_URL rebuild
+  • UX polish (loading skeletons, better errors, refresh button)
+  • Extension Warehouse / RBZ packaging for distribution
+  • Optional: model update badges, local cache, offline mode
+
+
+================================================================================
+4. PLUGIN FOLDER STRUCTURE (ACTUAL, 2026-05-29)
+================================================================================
+
 sketchlib-plugin/
-├── sketchlib.rb           ← SketchUp entry point (registered in Extension Warehouse)
+├── sketchlib.rb              # Extension entry (loaded via load_sketchlib.rb)
+├── load_sketchlib.rb         # COPY TO Plugins ROOT on Windows/Mac
 ├── sketchlib/
-│   ├── main.rb            ← loads the dialog
-│   └── bridge.rb          ← hardware ID, model insertion
+│   ├── main.rb               # HtmlDialog, set_html (injects JS at runtime)
+│   └── bridge.rb             # hardware ID, download_and_insert, API_URL env
 └── ui/
-    ├── package.json
-    ├── vite.config.js
-    ├── index.html
-    └── src/
-        ├── main.jsx
-        ├── App.jsx
-        ├── api.js
-        └── components/
-            ├── Login.jsx
-            ├── Library.jsx
-            └── ModelCard.jsx
-
-3.2 Ruby Files
-sketchlib.rb — SketchUp entry point
-rubyrequire 'sketchup'
-require 'extensions'
-
-module SketchLib
-  PLUGIN_DIR = File.dirname(__FILE__)
-
-  extension = SketchupExtension.new(
-    'SketchLib',
-    File.join(PLUGIN_DIR, 'sketchlib', 'main.rb')
-  )
-
-  extension.description = 'Browse and insert curated 3D furniture models from SketchLib.'
-  extension.version     = '1.0.0'
-  extension.copyright   = '2024 SketchLib'
-
-  Sketchup.register_extension(extension, true)
-end
-
-sketchlib/bridge.rb
-rubymodule SketchLib
-  module Bridge
-
-    API_URL = 'https://your-api-domain.com/api'.freeze
-
-    def self.get_hardware_id
-      begin
-        if Sketchup.platform == :platform_win
-          result = `wmic csproduct get UUID 2>nul`
-          result.split("\n").map(&:strip).reject(&:empty?).last.to_s.strip
-        else
-          result = `system_profiler SPHardwareDataType 2>/dev/null | awk '/Hardware UUID/ { print $3 }'`
-          result.strip
-        end
-      rescue => e
-        # Fallback to a combination of available system info
-        require 'digest'
-        Digest::SHA256.hexdigest(ENV['COMPUTERNAME'].to_s + ENV['USERNAME'].to_s)[0..36]
-      end
-    end
-
-    def self.insert_model(dialog, signed_url, model_name)
-      model = Sketchup.active_model
-      return unless model
-
-      begin
-        definition = model.definitions.load(signed_url)
-        transform  = Geom::Transformation.new(ORIGIN)
-        model.active_entities.add_instance(definition, transform)
-        model.active_view.zoom_extents
-
-        dialog.execute_script("window.onModelInserted('#{model_name}')")
-      rescue => e
-        dialog.execute_script("window.onInsertError('#{e.message.gsub("'", "\\'")}')")
-      end
-    end
-
-  end
-end
-
-sketchlib/main.rb
-rubyrequire_relative 'bridge'
-
-module SketchLib
-  module Main
-
-    UI_PATH = File.join(PLUGIN_DIR, 'ui', 'dist', 'index.html').freeze
-
-    def self.open_dialog
-      if @dialog && @dialog.visible?
-        @dialog.bring_to_front
-        return
-      end
-
-      @dialog = UI::HtmlDialog.new(
-        dialog_title:    'SketchLib',
-        scrollable:      false,
-        resizable:       true,
-        width:           420,
-        height:          680,
-        min_width:       380,
-        min_height:      600,
-        style:           UI::HtmlDialog::STYLE_UTILITY
-      )
-
-      @dialog.set_file(UI_PATH)
-
-      # ── JS → Ruby callbacks ────────────────────────────────────────────────
-
-      # Called when user logs in — receives token + hardware check
-      @dialog.add_action_callback('getHardwareId') do |_ctx|
-        hardware_id = Bridge.get_hardware_id
-        @dialog.execute_script("window.receiveHardwareId('#{hardware_id}')")
-      end
-
-      # Called when user wants to insert a model
-      @dialog.add_action_callback('insertModel') do |_ctx, signed_url, model_name|
-        Bridge.insert_model(@dialog, signed_url, model_name)
-      end
-
-      # Called to save token persistently
-      @dialog.add_action_callback('saveToken') do |_ctx, token|
-        Sketchup.write_default('SketchLib', 'auth_token', token)
-      end
-
-      # Called to read saved token on startup
-      @dialog.add_action_callback('getSavedToken') do |_ctx|
-        token = Sketchup.read_default('SketchLib', 'auth_token', '')
-        @dialog.execute_script("window.receiveSavedToken('#{token}')")
-      end
-
-      # Called to clear token on logout
-      @dialog.add_action_callback('clearToken') do |_ctx|
-        Sketchup.write_default('SketchLib', 'auth_token', '')
-      end
-
-      @dialog.show
-    end
-
-    # Register menu item in SketchUp's Extensions menu
-    unless file_loaded?(__FILE__)
-      menu = UI.menu('Extensions')
-      menu.add_item('SketchLib') { Main.open_dialog }
-      file_loaded(__FILE__)
-    end
-
-  end
-end
-
-3.3 Plugin React UI
-ui/package.json
-json{
-  "name": "sketchlib-ui",
-  "private": true,
-  "version": "1.0.0",
-  "scripts": {
-    "dev": "vite",
-    "build": "vite build"
-  },
-  "dependencies": {
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0"
-  },
-  "devDependencies": {
-    "@vitejs/plugin-react": "^4.0.0",
-    "vite": "^5.0.0"
-  }
-}
-ui/vite.config.js
-javascriptimport { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
-
-export default defineConfig({
-  plugins: [react()],
-  build: {
-    outDir: 'dist',
-    rollupOptions: {
-      output: {
-        // Single file output so SketchUp HtmlDialog can load it
-        inlineDynamicImports: true,
-        entryFileNames:   'assets/app.js',
-        chunkFileNames:   'assets/app.js',
-        assetFileNames:   'assets/app.[ext]',
-      }
-    }
-  },
-  base: './', // relative paths so HtmlDialog can find assets
-})
-
-ui/src/api.js
-javascriptconst API_URL = 'https://your-api-domain.com/api'
-
-let authToken = null
-
-export function setToken(token) {
-  authToken = token
-}
-
-async function request(method, path, body = null) {
-  const headers = { 'Content-Type': 'application/json' }
-  if (authToken) headers['Authorization'] = `Bearer ${authToken}`
-
-  const res = await fetch(`${API_URL}${path}`, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : null,
-  })
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ message: 'Request failed' }))
-    throw { status: res.status, message: err.message }
-  }
-
-  return res.json()
-}
-
-export const api = {
-  login:          (email, password, hardware_id) =>
-    request('POST', '/auth/login', { email, password, hardware_id }),
-  me:             () => request('GET', '/auth/me'),
-  logout:         () => request('POST', '/auth/logout'),
-  getCategories:  () => request('GET', '/categories'),
-  getCategoryModels: (slug) => request('GET', `/categories/${slug}/models`),
-  downloadModel:  (modelId) => request('POST', `/models/${modelId}/download`),
-}
-
-ui/src/App.jsx
-jsximport { useState, useEffect } from 'react'
-import Login from './components/Login'
-import Library from './components/Library'
-import { api, setToken } from './api'
-
-export default function App() {
-  const [token, setTokenState]   = useState(null)
-  const [user, setUser]          = useState(null)
-  const [loading, setLoading]    = useState(true)
-
-  // On mount: ask Ruby for saved token
-  useEffect(() => {
-    window.receiveSavedToken = (savedToken) => {
-      if (savedToken) {
-        setToken(savedToken)
-        setTokenState(savedToken)
-        api.me()
-          .then(res => setUser(res.user))
-          .catch(() => handleLogout())
-          .finally(() => setLoading(false))
-      } else {
-        setLoading(false)
-      }
-    }
-    window.sketchup.getSavedToken()
-  }, [])
-
-  // Feedback callbacks from Ruby
-  useEffect(() => {
-    window.onModelInserted = (modelName) => {
-      // Could show a toast notification
-      console.log(`Inserted: ${modelName}`)
-    }
-    window.onInsertError = (msg) => {
-      alert(`Failed to insert model: ${msg}`)
-    }
-  }, [])
-
-  const handleLogin = (newToken, userData) => {
-    setToken(newToken)
-    setTokenState(newToken)
-    setUser(userData)
-    window.sketchup.saveToken(newToken)
-  }
-
-  const handleLogout = () => {
-    api.logout().catch(() => {})
-    setTokenState(null)
-    setUser(null)
-    setToken(null)
-    window.sketchup.clearToken()
-  }
-
-  if (loading) {
-    return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh' }}>
-        <p style={{ color: '#888' }}>Loading...</p>
-      </div>
-    )
-  }
-
-  return (
-    <div style={{ fontFamily: 'system-ui, sans-serif', height: '100vh', overflow: 'hidden' }}>
-      {token && user ? (
-        <Library user={user} onLogout={handleLogout} />
-      ) : (
-        <Login onLogin={handleLogin} />
-      )}
-    </div>
-  )
-}
-
-ui/src/components/Login.jsx
-jsximport { useState } from 'react'
-import { api } from '../api'
-
-export default function Login({ onLogin }) {
-  const [email, setEmail]       = useState('')
-  const [password, setPassword] = useState('')
-  const [loading, setLoading]   = useState(false)
-  const [error, setError]       = useState('')
-
-  const handleSubmit = async () => {
-    setLoading(true)
-    setError('')
-
-    try {
-      // Step 1: Ask Ruby for hardware ID
-      await new Promise((resolve) => {
-        window.receiveHardwareId = (hwId) => {
-          window._pendingHardwareId = hwId
-          resolve()
-        }
-        window.sketchup.getHardwareId()
-      })
-
-      const hardwareId = window._pendingHardwareId
-
-      // Step 2: Login with hardware ID
-      const res = await api.login(email, password, hardwareId)
-      onLogin(res.token, res.user)
-
-    } catch (err) {
-      setError(err.message || 'Login failed. Check your credentials.')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const s = styles
-  return (
-    <div style={s.container}>
-      <h1 style={s.title}>SketchLib</h1>
-      <p style={s.subtitle}>Sign in to access your 3D library</p>
-
-      <input
-        style={s.input}
-        type="email"
-        placeholder="Email"
-        value={email}
-        onChange={e => setEmail(e.target.value)}
-      />
-      <input
-        style={s.input}
-        type="password"
-        placeholder="Password"
-        value={password}
-        onChange={e => setPassword(e.target.value)}
-        onKeyDown={e => e.key === 'Enter' && handleSubmit()}
-      />
-
-      {error && <p style={s.error}>{error}</p>}
-
-      <button style={s.button} onClick={handleSubmit} disabled={loading}>
-        {loading ? 'Signing in...' : 'Sign in'}
-      </button>
-    </div>
-  )
-}
-
-const styles = {
-  container: { padding: 24, display: 'flex', flexDirection: 'column', gap: 12, maxWidth: 360, margin: '80px auto 0' },
-  title:     { fontSize: 24, fontWeight: 600, margin: 0 },
-  subtitle:  { fontSize: 13, color: '#666', margin: '0 0 8px' },
-  input:     { padding: '10px 12px', border: '1px solid #ddd', borderRadius: 8, fontSize: 14, outline: 'none' },
-  button:    { padding: '11px 0', background: '#000', color: '#fff', border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 500, cursor: 'pointer' },
-  error:     { color: '#dc2626', fontSize: 13, background: '#fef2f2', padding: '8px 12px', borderRadius: 6 },
-}
-
-ui/src/components/Library.jsx
-jsximport { useState, useEffect } from 'react'
-import { api } from '../api'
-import ModelCard from './ModelCard'
-
-export default function Library({ user, onLogout }) {
-  const [categories, setCategories]   = useState([])
-  const [activeSlug, setActiveSlug]   = useState(null)
-  const [models, setModels]           = useState([])
-  const [loadingModels, setLoadingModels] = useState(false)
-  const [search, setSearch]           = useState('')
-
-  useEffect(() => {
-    api.getCategories().then(data => {
-      setCategories(data)
-      if (data.length > 0) selectCategory(data[0].slug)
-    })
-  }, [])
-
-  const selectCategory = async (slug) => {
-    setActiveSlug(slug)
-    setLoadingModels(true)
-    try {
-      const res = await api.getCategoryModels(slug)
-      setModels(res.models)
-    } catch (err) {
-      if (err.status === 403) setModels([])
-    } finally {
-      setLoadingModels(false)
-    }
-  }
-
-  const filteredModels = models.filter(m =>
-    m.name.toLowerCase().includes(search.toLowerCase())
-  )
-
-  const s = styles
-  return (
-    <div style={s.root}>
-      {/* Header */}
-      <div style={s.header}>
-        <span style={{ fontWeight: 600, fontSize: 15 }}>SketchLib</span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 12, color: '#888' }}>{user.name}</span>
-          <button style={s.logoutBtn} onClick={onLogout}>Logout</button>
-        </div>
-      </div>
-
-      {/* Category tabs */}
-      <div style={s.tabs}>
-        {categories.map(cat => (
-          <button key={cat.id}
-            style={{ ...s.tab, ...(activeSlug === cat.slug ? s.tabActive : {}) }}
-            onClick={() => selectCategory(cat.slug)}>
-            {cat.name}
-          </button>
-        ))}
-      </div>
-
-      {/* Search */}
-      <div style={{ padding: '8px 12px' }}>
-        <input
-          style={{ ...styles.input, width: '100%', boxSizing: 'border-box' }}
-          placeholder="Search models..."
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-        />
-      </div>
-
-      {/* Models grid */}
-      <div style={s.grid}>
-        {loadingModels ? (
-          <p style={{ color: '#888', fontSize: 13, padding: 16 }}>Loading...</p>
-        ) : filteredModels.length === 0 ? (
-          <p style={{ color: '#888', fontSize: 13, padding: 16 }}>No models found.</p>
-        ) : (
-          filteredModels.map(model => (
-            <ModelCard key={model.id} model={model} />
-          ))
-        )}
-      </div>
-    </div>
-  )
-}
-
-const styles = {
-  root:      { display: 'flex', flexDirection: 'column', height: '100vh' },
-  header:    { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', borderBottom: '1px solid #eee' },
-  tabs:      { display: 'flex', gap: 4, padding: '8px 12px', overflowX: 'auto', borderBottom: '1px solid #eee' },
-  tab:       { padding: '5px 12px', border: '1px solid #ddd', borderRadius: 20, fontSize: 12, background: 'white', cursor: 'pointer', whiteSpace: 'nowrap' },
-  tabActive: { background: '#000', color: '#fff', border: '1px solid #000' },
-  grid:      { flex: 1, overflowY: 'auto', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, padding: 12, alignContent: 'start' },
-  input:     { padding: '8px 10px', border: '1px solid #ddd', borderRadius: 8, fontSize: 13, outline: 'none' },
-  logoutBtn: { fontSize: 11, border: '1px solid #ddd', borderRadius: 6, padding: '3px 8px', background: 'white', cursor: 'pointer' },
-}
-
-ui/src/components/ModelCard.jsx
-jsximport { useState } from 'react'
-import { api } from '../api'
-
-export default function ModelCard({ model }) {
-  const [inserting, setInserting] = useState(false)
-  const [inserted, setInserted]   = useState(false)
-
-  const handleInsert = async () => {
-    setInserting(true)
-    try {
-      const res = await api.downloadModel(model.id)
-      const signedUrl = res.download_url
-
-      // Tell Ruby to load the model into SketchUp
-      window.sketchup.insertModel(signedUrl, model.name)
-
-      // Confirmation comes back via window.onModelInserted callback
-      setTimeout(() => setInserted(true), 500)
-      setTimeout(() => setInserted(false), 2500)
-    } catch (err) {
-      alert('Could not load model. ' + (err.message || ''))
-    } finally {
-      setInserting(false)
-    }
-  }
-
-  const s = styles
-  return (
-    <div style={s.card}>
-      <img src={model.thumbnail_url} alt={model.name}
-        style={s.thumb} loading="lazy" />
-      <div style={s.info}>
-        <p style={s.name}>{model.name}</p>
-        <p style={s.meta}>
-          SU {model.sketchup_version_min}+ · {(model.file_size_bytes / 1_000_000).toFixed(1)} MB
-        </p>
-        <button
-          style={{ ...s.btn, ...(inserted ? s.btnDone : {}) }}
-          onClick={handleInsert}
-          disabled={inserting}
-        >
-          {inserting ? 'Loading...' : inserted ? '✓ Inserted!' : 'Insert model'}
-        </button>
-      </div>
-    </div>
-  )
-}
-
-const styles = {
-  card:    { border: '1px solid #eee', borderRadius: 10, overflow: 'hidden' },
-  thumb:   { width: '100%', aspectRatio: '1', objectFit: 'cover', background: '#f5f5f5', display: 'block' },
-  info:    { padding: '8px 10px 10px' },
-  name:    { fontSize: 12, fontWeight: 500, margin: '0 0 2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-  meta:    { fontSize: 10, color: '#999', margin: '0 0 6px' },
-  btn:     { width: '100%', padding: '6px 0', background: '#000', color: '#fff', border: 'none', borderRadius: 6, fontSize: 11, fontWeight: 500, cursor: 'pointer' },
-  btnDone: { background: '#16a34a' },
-}
-
-Build the plugin UI:
-bashcd ui
-npm install
-npm run build
-# dist/index.html is now ready for SketchUp to load
+    ├── shell.html            # UI template (small)
+    ├── src/                  # React source
+    ├── .env                  # VITE_API_URL (not committed if secrets — use example)
+    ├── env.example
+    ├── vite.config.js        # builds app.js; copies shell.html to dist/
+    └── dist/                 # SHIP THESE TO SKETCHUP
+        ├── shell.html        # ~1.5 KB
+        ├── app.js            # ~148 KB — Ruby reads & injects into HTML
+        └── app.css           # small
+
+Ruby main.rb validates app.js >= 100 KB; shows messagebox if missing/stale.
+
+DO NOT ship old ui/dist/index.html (~104 KB) — deprecated, causes SyntaxError.
+
+UI load path: set_html(build_ui_html) — not set_file — avoids file:// asset bugs.
+
+
+================================================================================
+5. WINDOWS INSTALL (TEST / BETA DISTRIBUTION)
+================================================================================
+
+Target path (adjust SketchUp year 2024/2025/2026):
+
+  %APPDATA%\SketchUp\SketchUp 2026\SketchUp\Plugins\
+    load_sketchlib.rb
+    sketchlib-plugin\
+      sketchlib.rb
+      sketchlib\main.rb
+      sketchlib\bridge.rb
+      ui\dist\shell.html
+      ui\dist\app.js      ← must be ~148 KB
+      ui\dist\app.css
+
+Steps:
+  1. Quit SketchUp fully
+  2. Copy/update files (git pull or USB)
+  3. Delete legacy ui\dist\index.html if present
+  4. Open SketchUp → Create new model (not Home screen only)
+  5. Extensions → SketchLib
+
+Dev loop (Ubuntu → Windows):
+  Edit ui/src → npm run build → git push → pull on Windows → restart SketchUp
+
+
+================================================================================
+6. LOCAL DEV URLS & ACCOUNTS (CURRENT)
+================================================================================
+
+  API (Ubuntu localhost)     http://localhost:8000/api
+  API (LAN — sister's PC)    http://192.168.217.133:8000/api
+  Filament                   http://localhost:8000/admin
+  Next.js storefront         http://localhost:3000
+
+  php artisan serve --host=0.0.0.0 --port=8000   # required for LAN plugin tests
+
+  Admin                      admin@sketchlib.com / sketchlib-admin
+  Test client (plugin/web)   test@example.com / password123
+  Beta users                 *@beta.sketchlib.com / beta2024!
+
+Postman: separate clientToken vs adminToken (SketchLib.postman_collection.json)
+
+
+================================================================================
+7. PLUGIN API CONTRACT
+================================================================================
+
+Base: VITE_API_URL (built into app.js), e.g. http://192.168.217.133:8000/api
+
+  POST   /auth/login
+         Body: { email, password, hardware_id }
+         Returns: { user, token }  — token name "plugin" on server
+         403 if device_mismatch (account bound to other PC)
+
+  GET    /auth/me              [Bearer plugin token]
+         Returns: { user, pack_category_ids }
+
+  POST   /auth/logout          [Bearer]
+
+  GET    /categories         (public)
+
+  GET    /categories/{slug}/models   [Bearer]
+         Returns: { category, models[] }  — thumbnail_url may be null
+
+  POST   /models/{id}/download       [Bearer]
+         Returns: { download_url }  — R2 presigned GET, ~10 min
+
+Plugin does NOT call: register, subscriptions checkout, admin routes, packs purchase
+(those are web-only; subscribe on site, use plugin to consume library).
+
+
+================================================================================
+8. BACKEND STATE (ALIGNED WITH PLUGIN — 2026-05-29)
+================================================================================
+
+Laravel API + Filament + MySQL sketchlib — working locally and on LAN.
+
+CLOUDFLARE R2 — fully configured ✅
+  Bucket:     sketchlib-models (private, Standard)
+  Endpoint:   https://c0a49166b82cc1390456fb613b7d7efb.r2.cloudflarestorage.com
+  .env:       R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET, R2_ENDPOINT
+  FILESYSTEM_DISK=r2   (was typo FILESYSTEM_DISK=2 — fixed)
+
+UPLOAD FLOW (admin) ✅
+  1. Postman: Admin → Login (Admin) → Upload Presign
+     GET /api/admin/upload/presign?file_name=...&file_type=application/octet-stream
+         &thumbnail_name=...&thumbnail_type=image/jpeg&category_slug=living-room
+  2. PUT binary .skp to file_upload_url (Postman on Windows, Body → binary)
+  3. Filament → 3D Models → Create/Edit → paste file_key, publish
+
+THUMBNAIL — optional for insert ✅
+  Migration: thumbnail_key nullable on sketchup_models
+  Filament: thumbnail_key not required
+  LibraryController: thumbnail_url null when no key
+  Insert/download only needs file_key
+
+CORS ✅
+  config/cors.php allows FRONTEND_URL + 'null' origin for SketchUp HtmlDialog
+
+VERIFIED INSERT CHAIN ✅
+  Presign → PUT test-cube.skp → Filament "Test Cube" (Living Room) →
+  Plugin Insert → SUCCESS on SketchUp 2026 / Windows
+
+
+================================================================================
+9. PLUGIN GAPS VS CURRENT BACKEND (FOR DEPLOY / NEXT WORK)
+================================================================================
+
+Already aligned (no plugin change required):
+  • R2 presigned download
+  • Nullable thumbnails (UI handles missing thumb)
+  • hardware_id login + device_mismatch message
+  • pack_category_ids gating
+
+Plugin gaps — do before or during production:
+
+  A) API URL is compile-time
+     • ui/.env VITE_API_URL must be rebuilt per environment
+     • Production: VITE_API_URL=https://api.yourdomain.com/api → npm run build
+     • Distribute new ui/dist/app.js + shell.html + app.css with each release
+
+  B) Auth stays Bearer in SketchUp prefs (not httpOnly cookies)
+     • Next.js may migrate to Sanctum SPA cookies on deploy — plugin unchanged
+     • Do not remove Bearer login path from AuthService
+
+  C) No auto-refresh of library
+     • New models appear when user reopens panel or switches category
+     • Optional: pull-to-refresh button, poll /categories on interval
+
+  D) No model version / "updated" UX
+     • Backend could add updated_at badge later; plugin not implemented
+
+  E) Distribution is manual folder copy
+     • No .rbz / Extension Warehouse yet
+     • load_sketchlib.rb + sketchlib-plugin folder documented in README
+
+  F) SKETCHLIB_API_URL env on Ruby (optional)
+     • bridge.rb supports ENV['SKETCHLIB_API_URL'] but UI uses Vite build only
+     • Could unify on Ruby env for single rebuild-free config (future)
+
+  G) Error UX
+     • Insert failures use alert(); could show in-panel toast
+     • Network errors show API URL in login screen (helpful for LAN debug)
+
+Backend gaps unrelated to plugin but block production:
+  • Real BaridiMob payment account on Next.js
+  • Resend + queue for emails (optional launch)
+  • Production MySQL, HTTPS, SANCTUM_STATEFUL_DOMAINS
+  • Sarah admin user + Filament role polish
+
+
+================================================================================
+10. ISSUES SOLVED DURING BUILD (REFERENCE)
+================================================================================
+
+  • SketchUp Home screen has no Extensions menu → open/create a model first
+  • Plugin not in menu → load_sketchlib.rb in Plugins root
+  • White screen → ES modules don't work in HtmlDialog; use IIFE app.js
+  • "Loading SketchLib…" forever → script before #root; now Ruby injects at end
+  • "Unexpected token '<'" / 104 KB index.html → stale gitignored dist; now
+    ship shell.html + app.js; Ruby injects; delete old index.html
+  • LAN API → serve --host=0.0.0.0 + VITE_API_URL=Ubuntu LAN IP
+  • R2 placeholder your_account_id in URL → fix .env R2_ENDPOINT
+  • definitions.load(presigned URL) fails → download to temp file first
+
+
+================================================================================
+11. BUILD & GIT COMMANDS (PLUGIN REPO)
+================================================================================
+
+  cd sketchlib-plugin/ui
+  cp env.example .env
+  # VITE_API_URL=http://192.168.217.133:8000/api   (dev LAN)
+  # VITE_API_URL=https://api.sketchlib.com/api     (production)
+  npm install
+  npm run build
+  # Verify: dist/app.js ~148000 bytes, dist/shell.html ~1500 bytes
+
+  git add sketchlib-plugin/ui/dist/app.js
+  git add sketchlib-plugin/ui/dist/shell.html
+  git add sketchlib-plugin/ui/dist/app.css
+  # dist must be tracked — do not gitignore shipped bundle
+
+  git add sketchlib-plugin/sketchlib/
+  git add sketchlib-plugin/load_sketchlib.rb sketchlib-plugin/sketchlib.rb
+
+
+================================================================================
+12. PRODUCTION DEPLOY RUNBOOK (STEP-BY-STEP)
+================================================================================
+
+ORDER: Backend first → verify API → Next.js → rebuild plugin → test → Sarah content
+
+─── A) LARAVEL (API + FILAMENT) ───
+
+  1. Choose host: Railway, Forge+VPS, Fly.io, Laravel Cloud, etc.
+  2. Provision managed MySQL; import or migrate fresh DB
+  3. Set production .env:
+       APP_URL=https://api.yourdomain.com
+       FRONTEND_URL=https://yourdomain.com
+       SANCTUM_STATEFUL_DOMAINS=yourdomain.com
+       DB_* (production credentials)
+       R2_* (same bucket or separate prod bucket)
+       FILESYSTEM_DISK=r2
+       SESSION_SECURE_COOKIE=true
+       APP_ENV=production
+       APP_DEBUG=false
+  4. Deploy code; run:
+       php artisan migrate --force
+       php artisan config:cache
+       php artisan route:cache
+  5. HTTPS only; point api.yourdomain.com to app
+  6. Smoke test:
+       GET https://api.yourdomain.com/api/categories
+       Filament https://api.yourdomain.com/admin
+       Postman presign + PUT on prod (admin token)
+  7. Create Sarah's admin user (is_admin=true) in Filament
+  8. Optional: php artisan queue:work (Resend emails)
+
+─── B) NEXT.JS STOREFRONT ───
+
+  1. Host on Vercel or same VPS (Node)
+  2. Env:
+       NEXT_PUBLIC_API_URL=https://api.yourdomain.com/api
+       NEXT_PUBLIC_PAYMENT_ACCOUNT=<real BaridiMob when ready>
+  3. Deploy; npm run build in CI
+  4. Migrate to Sanctum SPA cookies if desired (backend CORS already supports
+     credentials; remove js-cookie Bearer pattern from web — see web handoff)
+  5. Smoke: register, login, browse, checkout pending, Filament approve, download
+
+─── C) SKETCHUP PLUGIN ───
+
+  1. On build machine:
+       cd sketchlib-plugin/ui
+       VITE_API_URL=https://api.yourdomain.com/api npm run build
+  2. Package for users:
+       • load_sketchlib.rb
+       • sketchlib-plugin/ (full folder with dist/app.js ~148KB)
+       • Optional: zip as sketchlib-plugin-v1.0.0.zip with README install steps
+  3. Distribute: download link, GitHub release, or email to beta testers
+  4. User install: copy to Plugins folder, restart SketchUp
+  5. Smoke on Windows/Mac:
+       Login with production account
+       Browse category
+       Insert one model
+  6. Extension Warehouse (later): package .rbz, Trimble review process
+
+─── D) CORS / SECURITY CHECKLIST ───
+
+  [ ] cors.php includes production frontend URL
+  [ ] 'null' origin kept for SketchUp HtmlDialog OR test prod plugin still works
+  [ ] R2 bucket private; only presigned access
+  [ ] Plugin tokens revocable; hardware_id reset documented for support
+  [ ] Rate limiting on /auth/login if exposed publicly
+
+─── E) CONTENT (SARAH) — AFTER PROD INFRA LIVE ───
+
+  1. Naming convention for file_key: models/{category_slug}/{uuid}-{slug}.skp
+  2. Upload via Filament or presign workflow
+  3. Thumbnails recommended for browse UX (not required for insert)
+  4. First batch 5–10 models per category; verify web download + plugin insert
+  5. POST /admin/notify/new-models when Resend ready (web email, not plugin yet)
+
+─── F) POST-DEPLOY VERIFICATION MATRIX ───
+
+  | Flow                         | Where to test        |
+  |------------------------------|----------------------|
+  | Register / login web         | yourdomain.com       |
+  | Subscribe / pack checkout    | web + Filament approve |
+  | Browse / download .skp web   | dashboard            |
+  | Plugin login                 | SketchUp + prod API  |
+  | Plugin insert                | SketchUp + prod R2   |
+  | Device lock                  | second PC → 403      |
+  | Admin upload new model       | Filament → plugin    |
+
+
+================================================================================
+13. KEY PLUGIN SOURCE FILES
+================================================================================
+
+  sketchlib-plugin/load_sketchlib.rb
+  sketchlib-plugin/sketchlib.rb
+  sketchlib-plugin/sketchlib/main.rb       # set_html, callbacks, ui_files_ok?
+  sketchlib-plugin/sketchlib/bridge.rb     # download_and_insert
+  sketchlib-plugin/ui/src/App.jsx
+  sketchlib-plugin/ui/src/api.js
+  sketchlib-plugin/ui/src/sketchup.js
+  sketchlib-plugin/ui/src/components/Login.jsx
+  sketchlib-plugin/ui/src/components/Library.jsx
+  sketchlib-plugin/ui/src/components/ModelCard.jsx
+  sketchlib-plugin/ui/src/lib/access.js
+  sketchlib-plugin/ui/vite.config.js
+  sketchlib-plugin/README.md
+
+
+================================================================================
+14. RELATED HANDOFF DOCS
+================================================================================
+
+  mvp-working-summary.txt     — Laravel API, Filament, R2, seeders, all endpoints
+  mvpFurtniture.txt           — Next.js storefront MVP
+  mvp-plugin-summary.txt      — shorter plugin-only notes (subset of this file)
+  mvp plugin.txt              — this file (full plugin + deploy handoff)
+
+
+================================================================================
+15. RECOMMENDED NEXT ACTIONS (PRIORITY)
+================================================================================
+
+  1. DEPLOY Laravel + MySQL + R2 to staging/production URL
+  2. DEPLOY Next.js with NEXT_PUBLIC_API_URL pointing at prod API
+  3. REBUILD plugin with VITE_API_URL=prod; test insert on one Windows machine
+  4. POLISH plugin UX (optional before public beta)
+  5. Sarah: first real model batch after prod Filament is live
+  6. Extension Warehouse / RBZ when ready for public SketchUp distribution
+  7. BaridiMob real account, Resend emails — can follow launch
+
+
+================================================================================
+END — Core product loop proven. This file is the plugin + deploy handoff for Claude.
+================================================================================
