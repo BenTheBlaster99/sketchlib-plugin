@@ -26,8 +26,16 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    window.onModelInserted = (modelName) => console.log(`Inserted: ${modelName}`)
-    window.onInsertError = (msg) => alert(`Failed to insert model: ${msg}`)
+    window.dispatchInsertEvent = (phase, extra = {}) => {
+      window.dispatchEvent(
+        new CustomEvent('sketchlib-insert', { detail: { phase, ...extra } }),
+      )
+    }
+    window.onPlacementMode = () => window.dispatchInsertEvent('placing')
+    window.onModelInserted = (modelName) =>
+      window.dispatchInsertEvent('inserted', { modelName })
+    window.onInsertCancelled = () => window.dispatchInsertEvent('cancelled')
+    window.onInsertError = (msg) => window.dispatchInsertEvent('error', { message: msg })
   }, [])
 
   useEffect(() => {

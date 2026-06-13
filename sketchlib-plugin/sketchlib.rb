@@ -21,7 +21,7 @@ module SketchLib
   extension = SketchupExtension.new('SketchLib', EXTENSION_ENTRY)
 
   extension.description = 'Browse and insert curated 3D furniture models from SketchLib.'
-  extension.version     = '1.0.1'
+  extension.version     = '1.1.0'
   extension.copyright   = '2026 SketchLib'
 
   Sketchup.register_extension(extension, true)

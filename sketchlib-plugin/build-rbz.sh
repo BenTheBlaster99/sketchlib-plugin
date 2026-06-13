@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-VERSION="${1:-1.0.1-beta}"
+VERSION="${1:-1.1.0-beta}"
 OUT_NAME="sketchlib-${VERSION}.rbz"
 DIST_DIR="${ROOT}/../dist"
 STAGE="$(mktemp -d)"

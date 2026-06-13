@@ -55,12 +55,12 @@ module SketchLib
       Digest::SHA256.hexdigest(seed)[0..35]
     end
 
-    # Phase 4: download presigned URL to a temp .skp, load locally, then unlink.
-    # definitions.load(signed_url) is unreliable (long R2 query strings break SketchUp).
-    def self.download_and_insert(dialog, signed_url, model_name)
+    # Download .skp locally, load definition, then activate click-to-place tool.
+    def self.download_and_prepare(dialog, signed_url, model_name)
       require 'net/http'
       require 'tempfile'
       require 'uri'
+      require_relative 'placement_tool'
 
       uri = URI.parse(signed_url)
       tmp = Tempfile.new(['sketchlib_', '.skp'])
@@ -82,21 +82,22 @@ module SketchLib
       raise 'No active model' unless model
 
       definition = load_skp_definition(model, tmp.path)
-      transform = Geom::Transformation.new(ORIGIN)
-      model.active_entities.add_instance(definition, transform)
-      model.active_view.zoom_extents
       tmp.unlink
 
-      safe_name = model_name.to_s.gsub("'", "\\\\'")
-      dialog.execute_script("window.onModelInserted && window.onModelInserted('#{safe_name}')")
+      model.select_tool(PlacementTool.new(definition, model_name, dialog))
+      dialog.execute_script('window.onPlacementMode && window.onPlacementMode()')
     rescue StandardError => e
       tmp&.unlink
-      safe_msg = friendly_insert_error(e).gsub("'", "\\\\'")
+      safe_msg = js_escape(friendly_insert_error(e))
       dialog.execute_script("window.onInsertError && window.onInsertError('#{safe_msg}')")
     end
 
     def self.insert_model(dialog, signed_url, model_name)
-      download_and_insert(dialog, signed_url, model_name)
+      download_and_prepare(dialog, signed_url, model_name)
+    end
+
+    def self.js_escape(str)
+      str.to_s.gsub('\\', '\\\\\\\\').gsub("'", "\\\\'").gsub("\n", ' ')
     end
 
     # Load .skp across SketchUp 2020–2026. Newer file formats need allow_newer (SU 2022+).

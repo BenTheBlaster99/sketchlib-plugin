@@ -5,12 +5,15 @@ import ModelCard from './ModelCard'
 
 export default function Library({ user, packCategoryIds, onLogout }) {
   const [categories, setCategories] = useState([])
+  const [tags, setTags] = useState([])
   const [activeSlug, setActiveSlug] = useState(null)
+  const [activeTags, setActiveTags] = useState([])
   const [models, setModels] = useState([])
   const [loadingModels, setLoadingModels] = useState(false)
   const [lockedMessage, setLockedMessage] = useState('')
   const [search, setSearch] = useState('')
   const [loadError, setLoadError] = useState('')
+  const [view, setView] = useState('browse')
 
   useEffect(() => {
     api
@@ -20,10 +23,17 @@ export default function Library({ user, packCategoryIds, onLogout }) {
         if (data.length > 0) selectCategory(data[0])
       })
       .catch((err) => setLoadError(err.message || 'Could not load categories'))
+
+    api
+      .getTags()
+      .then(setTags)
+      .catch(() => {})
   }, [])
 
   const selectCategory = async (category) => {
+    setView('browse')
     setActiveSlug(category.slug)
+    setActiveTags([])
     setSearch('')
     setLockedMessage('')
     setModels([])
@@ -33,10 +43,15 @@ export default function Library({ user, packCategoryIds, onLogout }) {
       return
     }
 
+    await loadCategoryModels(category.slug, [])
+  }
+
+  const loadCategoryModels = async (slug, tagSlugs) => {
     setLoadingModels(true)
     try {
-      const res = await api.getCategoryModels(category.slug)
+      const res = await api.getCategoryModels(slug, tagSlugs)
       setModels(res.models || [])
+      setLoadError('')
     } catch (err) {
       if (err.status === 403) {
         setLockedMessage(err.message || 'No access to this category.')
@@ -47,6 +62,36 @@ export default function Library({ user, packCategoryIds, onLogout }) {
     } finally {
       setLoadingModels(false)
     }
+  }
+
+  const loadSaved = async () => {
+    setView('saved')
+    setActiveSlug(null)
+    setLockedMessage('')
+    setSearch('')
+    setLoadingModels(true)
+    try {
+      const data = await api.getFavorites()
+      setModels(Array.isArray(data) ? data : [])
+      setLoadError('')
+    } catch (err) {
+      setLoadError(err.message || 'Could not load saved models')
+      setModels([])
+    } finally {
+      setLoadingModels(false)
+    }
+  }
+
+  useEffect(() => {
+    if (view !== 'browse' || !activeSlug || lockedMessage) return
+    loadCategoryModels(activeSlug, activeTags)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTags])
+
+  const toggleTag = (slug) => {
+    setActiveTags((prev) =>
+      prev.includes(slug) ? prev.filter((t) => t !== slug) : [...prev, slug],
+    )
   }
 
   const filteredModels = models.filter((m) =>
@@ -70,6 +115,13 @@ export default function Library({ user, packCategoryIds, onLogout }) {
           <span style={s.badge}>{accessLabel}</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <button
+            type="button"
+            style={{ ...s.savedBtn, ...(view === 'saved' ? s.savedBtnActive : {}) }}
+            onClick={loadSaved}
+          >
+            Saved
+          </button>
           <span style={s.userName}>{user.name}</span>
           <button type="button" style={s.logoutBtn} onClick={onLogout}>
             Logout
@@ -77,31 +129,56 @@ export default function Library({ user, packCategoryIds, onLogout }) {
         </div>
       </div>
 
-      <div style={s.tabs}>
-        {categories.map((cat) => {
-          const locked = !canAccessCategory(cat.id, user, packCategoryIds)
-          return (
+      {view === 'browse' && (
+        <div style={s.tabs}>
+          {categories.map((cat) => {
+            const locked = !canAccessCategory(cat.id, user, packCategoryIds)
+            return (
+              <button
+                key={cat.id}
+                type="button"
+                style={{
+                  ...s.tab,
+                  ...(activeSlug === cat.slug ? s.tabActive : {}),
+                  ...(locked ? s.tabLocked : {}),
+                }}
+                onClick={() => selectCategory(cat)}
+              >
+                {cat.name}
+                {locked ? ' 🔒' : ''}
+              </button>
+            )
+          })}
+        </div>
+      )}
+
+      {view === 'browse' && tags.length > 0 && !lockedMessage && (
+        <div style={s.tagRow}>
+          {tags.map((tag) => (
             <button
-              key={cat.id}
+              key={tag.id}
               type="button"
               style={{
-                ...s.tab,
-                ...(activeSlug === cat.slug ? s.tabActive : {}),
-                ...(locked ? s.tabLocked : {}),
+                ...s.tagChip,
+                ...(activeTags.includes(tag.slug) ? s.tagChipActive : {}),
               }}
-              onClick={() => selectCategory(cat)}
+              onClick={() => toggleTag(tag.slug)}
             >
-              {cat.name}
-              {locked ? ' 🔒' : ''}
+              #{tag.name}
             </button>
-          )
-        })}
-      </div>
+          ))}
+          {activeTags.length > 0 && (
+            <button type="button" style={s.tagClear} onClick={() => setActiveTags([])}>
+              Clear
+            </button>
+          )}
+        </div>
+      )}
 
       <div style={{ padding: '8px 12px' }}>
         <input
           style={s.input}
-          placeholder="Search models…"
+          placeholder={view === 'saved' ? 'Search saved…' : 'Search models…'}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           disabled={!!lockedMessage}
@@ -115,11 +192,15 @@ export default function Library({ user, packCategoryIds, onLogout }) {
         {loadingModels ? (
           <p style={s.hint}>Loading models…</p>
         ) : lockedMessage ? null : filteredModels.length === 0 ? (
-          <p style={s.hint}>No models in this category.</p>
+          <p style={s.hint}>
+            {view === 'saved'
+              ? 'No saved models yet. Tap ♡ on any model to save it.'
+              : activeTags.length
+                ? 'No models match these tags.'
+                : 'No models in this category.'}
+          </p>
         ) : (
-          filteredModels.map((model) => (
-            <ModelCard key={model.id} model={model} />
-          ))
+          filteredModels.map((model) => <ModelCard key={model.id} model={model} />)
         )}
       </div>
     </div>
@@ -146,6 +227,15 @@ const s = {
     fontWeight: 600,
   },
   userName: { fontSize: 12, color: '#888' },
+  savedBtn: {
+    fontSize: 11,
+    border: '1px solid #ddd',
+    borderRadius: 6,
+    padding: '3px 8px',
+    background: 'white',
+    cursor: 'pointer',
+  },
+  savedBtnActive: { background: '#000', color: '#fff', borderColor: '#000' },
   tabs: {
     display: 'flex',
     gap: 4,
@@ -165,6 +255,32 @@ const s = {
   },
   tabActive: { background: '#000', color: '#fff', border: '1px solid #000' },
   tabLocked: { opacity: 0.65 },
+  tagRow: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: 6,
+    padding: '8px 12px',
+    borderBottom: '1px solid #eee',
+    background: '#fafafa',
+  },
+  tagChip: {
+    padding: '3px 10px',
+    borderRadius: 999,
+    fontSize: 11,
+    border: '1px solid #ddd',
+    background: '#fff',
+    color: '#555',
+    cursor: 'pointer',
+  },
+  tagChipActive: { background: '#000', color: '#fff', borderColor: '#000' },
+  tagClear: {
+    padding: '3px 8px',
+    fontSize: 11,
+    border: 'none',
+    background: 'none',
+    color: '#888',
+    cursor: 'pointer',
+  },
   input: {
     width: '100%',
     boxSizing: 'border-box',

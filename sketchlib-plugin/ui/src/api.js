@@ -11,13 +11,23 @@ export function setToken(token) {
   authToken = token || null
 }
 
-async function request(method, path, body = null) {
+async function request(method, path, body = null, query = null) {
   const headers = { 'Content-Type': 'application/json', Accept: 'application/json' }
   if (authToken) headers.Authorization = `Bearer ${authToken}`
 
+  let url = `${API_URL}${path}`
+  if (query && Object.keys(query).length > 0) {
+    const params = new URLSearchParams()
+    Object.entries(query).forEach(([key, value]) => {
+      if (value != null && value !== '') params.set(key, value)
+    })
+    const qs = params.toString()
+    if (qs) url += `?${qs}`
+  }
+
   let res
   try {
-    res = await fetch(`${API_URL}${path}`, {
+    res = await fetch(url, {
       method,
       headers,
       body: body ? JSON.stringify(body) : null,
@@ -51,7 +61,19 @@ export const api = {
 
   getCategories: () => request('GET', '/categories'),
 
-  getCategoryModels: (slug) => request('GET', `/categories/${slug}/models`),
+  getTags: () => request('GET', '/tags'),
+
+  getCategoryModels: (slug, tagSlugs = []) =>
+    request(
+      'GET',
+      `/categories/${slug}/models`,
+      null,
+      tagSlugs.length ? { tags: tagSlugs.join(',') } : null,
+    ),
+
+  getFavorites: () => request('GET', '/models/favorites'),
+
+  toggleFavorite: (modelId) => request('POST', `/models/${modelId}/favorite`),
 
   downloadModel: (modelId) => request('POST', `/models/${modelId}/download`),
 }

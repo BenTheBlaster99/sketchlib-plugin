@@ -1,28 +1,89 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { api } from '../api'
 import { hasSketchupBridge } from '../sketchup'
 
 export default function ModelCard({ model }) {
-  const [inserting, setInserting] = useState(false)
-  const [inserted, setInserted] = useState(false)
+  const [insertState, setInsertState] = useState('idle')
+  const [favorited, setFavorited] = useState(model.is_favorited ?? false)
+  const [likes, setLikes] = useState(model.likes_count ?? 0)
+  const [toggling, setToggling] = useState(false)
+
+  useEffect(() => {
+    setFavorited(model.is_favorited ?? false)
+    setLikes(model.likes_count ?? 0)
+  }, [model.id, model.is_favorited, model.likes_count])
+
+  useEffect(() => {
+    const onInsert = (e) => {
+      if (window.__sketchlibActiveModelId !== model.id) return
+      const { phase } = e.detail || {}
+      if (phase === 'placing') setInsertState('placing')
+      if (phase === 'inserted') {
+        setInsertState('inserted')
+        window.__sketchlibActiveModelId = null
+        setTimeout(() => setInsertState('idle'), 2000)
+      }
+      if (phase === 'cancelled') {
+        window.__sketchlibActiveModelId = null
+        setInsertState('idle')
+      }
+      if (phase === 'error') {
+        window.__sketchlibActiveModelId = null
+        setInsertState('error')
+        setTimeout(() => setInsertState('idle'), 3000)
+      }
+    }
+    window.addEventListener('sketchlib-insert', onInsert)
+    return () => window.removeEventListener('sketchlib-insert', onInsert)
+  }, [model.id])
 
   const handleInsert = async () => {
     if (!hasSketchupBridge()) {
       alert('SketchUp bridge not available.')
       return
     }
+    if (insertState === 'loading' || insertState === 'placing') return
 
-    setInserting(true)
+    setInsertState('loading')
+    window.__sketchlibActiveModelId = model.id
     try {
       const res = await api.downloadModel(model.id)
       window.sketchup.insertModel(res.download_url, model.name)
-      setTimeout(() => setInserted(true), 500)
-      setTimeout(() => setInserted(false), 2500)
     } catch (err) {
+      window.__sketchlibActiveModelId = null
       alert('Could not load model. ' + (err.message || ''))
-    } finally {
-      setInserting(false)
+      setInsertState('idle')
     }
+  }
+
+  const handleFavorite = async (e) => {
+    e.stopPropagation()
+    if (toggling) return
+    setToggling(true)
+    try {
+      const res = await api.toggleFavorite(model.id)
+      setFavorited(res.favorited)
+      setLikes(res.likes_count)
+    } catch {
+      // ignore — token may have expired
+    } finally {
+      setToggling(false)
+    }
+  }
+
+  const buttonLabel = {
+    idle: 'Insert model',
+    loading: 'Downloading…',
+    placing: 'Click in scene to place',
+    inserted: 'Placed!',
+    error: 'Error — retry',
+  }[insertState]
+
+  const buttonStyle = {
+    ...s.btn,
+    ...(insertState === 'placing' ? { background: '#2563eb' } : {}),
+    ...(insertState === 'inserted' ? s.btnDone : {}),
+    ...(insertState === 'error' ? { background: '#dc2626' } : {}),
   }
 
   const sizeMb =
@@ -42,13 +103,42 @@ export default function ModelCard({ model }) {
         <p style={s.meta}>
           SU {model.sketchup_version_min || '?'}+ · {sizeMb} MB
         </p>
+
+        {model.tags?.length > 0 && (
+          <div style={s.tags}>
+            {model.tags.map((tag) => (
+              <span key={tag.id} style={s.tag}>
+                #{tag.name}
+              </span>
+            ))}
+          </div>
+        )}
+
+        <div style={s.likeRow}>
+          <span style={s.likes}>
+            {likes} {likes === 1 ? 'like' : 'likes'}
+          </span>
+          <button
+            type="button"
+            style={{
+              ...s.heart,
+              color: favorited ? '#ef4444' : '#d1d5db',
+            }}
+            onClick={handleFavorite}
+            disabled={toggling}
+            aria-label={favorited ? 'Remove from saved' : 'Save and like'}
+          >
+            {favorited ? '♥' : '♡'}
+          </button>
+        </div>
+
         <button
           type="button"
-          style={{ ...s.btn, ...(inserted ? s.btnDone : {}) }}
+          style={buttonStyle}
           onClick={handleInsert}
-          disabled={inserting}
+          disabled={insertState === 'loading' || insertState === 'placing'}
         >
-          {inserting ? 'Loading…' : inserted ? '✓ Inserted!' : 'Insert model'}
+          {buttonLabel}
         </button>
       </div>
     </div>
@@ -78,7 +168,24 @@ const s = {
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
   },
-  meta: { fontSize: 10, color: '#999', margin: '0 0 6px' },
+  meta: { fontSize: 10, color: '#999', margin: '0 0 4px' },
+  tags: { display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 4 },
+  tag: { fontSize: 9, color: '#9ca3af' },
+  likeRow: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  likes: { fontSize: 10, color: '#9ca3af' },
+  heart: {
+    border: 'none',
+    background: 'none',
+    fontSize: 16,
+    lineHeight: 1,
+    cursor: 'pointer',
+    padding: 0,
+  },
   btn: {
     width: '100%',
     padding: '6px 0',

@@ -12,6 +12,8 @@ Models from the library are saved in recent SketchUp versions. **2022 and newer*
 4. If SketchUp asks about loading unsigned extensions, allow it (Extension Manager → **Unrestricted** or approve when prompted).
 5. Open a model → **Extensions → SketchLib** → sign in with your website email and password.
 
+After you tap **Insert model**, click anywhere in the 3D scene to place it (Esc to cancel).
+
 No unzipping, no Plugins folder, no restart required (SketchUp loads it after install).
 
 ## Manual install (zip — developers only)
